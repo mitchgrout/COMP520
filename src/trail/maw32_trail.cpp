@@ -36,20 +36,20 @@ struct diff_vec
 
 struct prop_state
 {
-    size_t current_round;           // Which round we are currently propagating
-    size_t current_step;            // Which step in particular
-    float l2prob;                   // Probability that our differential holds in log2
+    size_t current_round;       // Which round we are currently propagating
+    size_t current_step;        // Which step in particular
+    float l2prob;               // Probability that our differential holds in log2
     union 
     {
-        uint8_t a, b, c, d;         // Differences in every register
-        uint32_t differential;      // Difference as a 32-bit int
+        uint8_t a, b, c, d;     // Differences in every register
+        uint32_t differential;  // Difference as a 32-bit int
     };
     union
     {
-        uint8_t d0, d1, d2, d3, d4, d5; // Differences in temporary variables
-        uint64_t tmp_diffs;             // Differences as a 64-bit int
+        uint8_t t1, t2, maj;    // Differences in temporary variables
+        uint32_t tmp_diffs;     //
     };
-    uint8_t W[16];                  // Differences in message schedule
+    uint8_t W[16];              // Differences in message schedule
 };
 
 // Linear
@@ -64,6 +64,46 @@ struct diff_prob propagate_sigma1(uint8_t d_m)
 {
     struct diff_prob result = { (uint8_t) (sigma1(0 ^ d_m) ^ sigma1(0)), 0.0f };
     return result;
+}
+
+// Nonlinear
+struct diff_vec propagate_keymix(uint8_t d_x, size_t round, float l2pthresh)
+{
+    const uint8_t K[16] = 
+    {
+        0xb7, 0xe1, 0x51, 0x62,
+        0x8a, 0xed, 0x2a, 0x6a,
+        0xbf, 0x71, 0x58, 0x80,
+        0x9c, 0xf4, 0xf3, 0xc7
+    };
+
+    const size_t sample_size = 256;
+    size_t counts[256];
+    memset(counts, 0, 256 * sizeof(size_t));
+
+    // Sample
+    for (int x = 0; x < 256; x++)
+    {
+        counts[add(K[round], x ^ d_x) ^ add(K[round], x)]++;
+    }
+
+    // Filter insignificant results
+    struct diff_vec samples = { NULL, 0 };
+    for (int i = 0; i < 256; i++) if (counts[i])
+    {
+        if (log2f(counts[i]) - log2f(sample_size) > l2pthresh) samples.len++;
+        else counts[i] = 0;
+    }
+
+    // Allocate enough space for these results
+    samples.pairs = (struct diff_prob *) calloc(samples.len, sizeof(struct diff_prob));
+
+    // Copy the results in
+    for (int i = 0, k = 0; i < 256; i++) if (counts[i])
+    {
+        samples.pairs[k++] = { (uint8_t) i, log2f(counts[i]) - log2f(sample_size) };
+    }
+    return samples;
 }
 
 // Nonlinear
@@ -133,6 +173,12 @@ struct diff_vec propagate_maj(uint8_t d_x, uint8_t d_y, uint8_t d_z, float l2pth
 // Take a differential, and propagate through to round n.
 void propagate(const char *msg_diff, const size_t n, const float pthresh)
 {
+    // 16 rounds max
+    if (n > 16)
+    {
+        fprintf(stderr, "Cannot propagate over more than 16 rounds\n");
+        return;
+    }
     // For backtracking
     std::stack<std::pair<struct prop_state, struct diff_vec>> stack;
 
@@ -174,182 +220,156 @@ void propagate(const char *msg_diff, const size_t n, const float pthresh)
         // Run this propagation through to completion
         while (state.current_round < n) switch (state.current_step)
         {
+#define PROP_START(...)                                                         \
+            if (memcmp(&state, &stack.top().first, sizeof(struct prop_state)))  \
+            {                                                                   \
+                struct diff_vec diffs = __VA_ARGS__;                            \
+                if (diffs.len == 0) goto BAILOUT;                               \
+                stack.push(std::make_pair(state, diffs));                       \
+            }
+            
+#define PROP_INTROS                                                 \
+            struct diff_vec *diffs = &stack.top().second;         \
+            struct diff_prob pair  = diffs->pairs[--diffs->len];
+
+#define PROP_END                    \
+            if (diffs->len == 0)    \
+            {                       \
+                free(diffs->pairs); \
+                stack.pop();        \
+            }
+
+#define t (state.current_round)
+
             case 0:
                 {
-                    // d0 = propagate_sigma1(b)
+                    // t1 = sigma1(b))
                     struct diff_prob pair = propagate_sigma1(state.b);
-                    state.d0              = pair.diff;
+                    state.t1              = pair.diff;
                     state.current_step   += 1;
                     break;
                 }
+
             case 1:
                 {
-                    // d1 = propagate_add(d0, W[t])
-                    // Fresh run
-                    if (memcmp(&state, &stack.top().first, sizeof(struct prop_state)))
-                    {
-                        struct diff_vec diffs = propagate_add(state.d0, state.W[state.current_round], pthresh);
-                        if (diffs.len == 0) goto BAILOUT; // Dead end
-                        stack.push(std::make_pair(state, diffs));
-                    }
-
-                    // Pop the back element from the vec on the stack
-                    struct diff_vec *diffs = &stack.top().second;
-                    struct diff_prob pair  = diffs->pairs[--diffs->len];
-                    state.l2prob          += pair.l2prob;
-                    state.d1               = pair.diff;
-                    state.current_step    += 1;
-
-                    // If that was the last element, pop from stack
-                    if (diffs->len == 0)
-                    {
-                        free(diffs->pairs);
-                        stack.pop();
-                    }
+                    // t1 = t1 + d
+                    PROP_START(propagate_add(state.t1, state.d, pthresh));
+                    PROP_INTROS
+                    state.l2prob       += pair.l2prob;
+                    state.t1            = pair.diff;
+                    state.current_step += 1;
+                    PROP_END
                     break;
                 }
+
             case 2:
                 {
-                    // d2 = propagate_add(d, d1)
-                    // Fresh run
-                    if (memcmp(&state, &stack.top().first, sizeof(struct prop_state)))
-                    {
-                        struct diff_vec diffs = propagate_add(state.d, state.d1, pthresh);
-                        if (diffs.len == 0) goto BAILOUT; // Dead end
-                        stack.push(std::make_pair(state, diffs));
-                    }
-
-                    // Pop the back element from the vec on the stack
-                    struct diff_vec *diffs = &stack.top().second;
-                    struct diff_prob pair  = diffs->pairs[--diffs->len];
-                    state.l2prob          += pair.l2prob;
-                    state.d2               = pair.diff;
-                    state.current_step    += 1;
-
-                    // If that was the last element, pop from stack
-                    if (diffs->len == 0)
-                    {
-                        free(diffs->pairs);
-                        stack.pop();
-                    }
+                    // t1 = t1 + K[t]
+                    PROP_START(propagate_keymix(state.t1, state.current_round, pthresh));
+                    PROP_INTROS
+                    state.l2prob       += pair.l2prob;
+                    state.t1            = pair.diff;
+                    state.current_step += t < 8? 3 : 1;
+                    PROP_END
                     break;
                 }
+
             case 3:
                 {
-                    // d3 = propagate_sigma0(a)
-                    struct diff_prob pair = propagate_sigma0(state.a);
-                    state.d3              = pair.diff;
-                    state.current_step   += 1;
-                    break;
+                    // t >= 8: W[t] = sigma0(W[t-3]) + W[t-4]
+                    struct diff_prob sigma0_diff = propagate_sigma0(state.W[t - 3]);
+                    PROP_START(propagate_add(sigma0_diff.diff, state.W[t - 4], pthresh));
+                    PROP_INTROS
+                    state.l2prob       += pair.l2prob;
+                    state.W[t]          = pair.diff;
+                    state.current_step += 1;
+                    PROP_END
                 }
+
             case 4:
                 {
-                    // d4 = propagate_maj(a, b, c)
-                    // Fresh run
-                    if (memcmp(&state, &stack.top().first, sizeof(struct prop_state)))
-                    {
-                        struct diff_vec diffs = propagate_maj(state.a, state.b, state.c, pthresh);
-                        if (diffs.len == 0) goto BAILOUT; // Dead end
-                        stack.push(std::make_pair(state, diffs));
-                    }
-
-                    // Pop the back element from the vec on the stack
-                    struct diff_vec *diffs = &stack.top().second;
-                    struct diff_prob pair  = diffs->pairs[--diffs->len];
-                    state.l2prob          += pair.l2prob;
-                    state.d4               = pair.diff;
-                    state.current_step    += 1;
-
-                    // If that was the last element, pop from stack
-                    if (diffs->len == 0)
-                    {
-                        free(diffs->pairs);
-                        stack.pop();
-                    }
+                    // t >= 8: W[t] = sigma1(W[t-8]) + W[t]
+                    struct diff_prob sigma1_diff = propagate_sigma1(state.W[t - 8]);
+                    PROP_START(propagate_add(sigma1_diff.diff, state.W[t], pthresh));
+                    PROP_INTROS
+                    state.l2prob       += pair.l2prob;
+                    state.W[t]          = pair.diff;
+                    state.current_step += 1;
+                    PROP_END
                     break;
                 }
+
             case 5:
                 {
-                    // d5 = propagate_add(d3, d4)
-                    // Fresh run
-                    if (memcmp(&state, &stack.top().first, sizeof(struct prop_state)))
-                    {
-                        struct diff_vec diffs = propagate_add(state.d3, state.d4, pthresh);
-                        if (diffs.len == 0) goto BAILOUT; // Dead end
-                        stack.push(std::make_pair(state, diffs));
-                    }
-
-                    // Pop the back element from the vec on the stack
-                    struct diff_vec *diffs = &stack.top().second;
-                    struct diff_prob pair  = diffs->pairs[--diffs->len];
-                    state.l2prob          += pair.l2prob;
-                    state.d5               = pair.diff;
-                    state.current_step    += 1;
-
-                    // If that was the last element, pop from stack
-                    if (diffs->len == 0)
-                    {
-                        free(diffs->pairs);
-                        stack.pop();
-                    }
+                    // t1 = t1 + W[t]
+                    PROP_START(propagate_add(state.t1, state.W[t], pthresh));
+                    PROP_INTROS
+                    state.l2prob       += pair.l2prob;
+                    state.t1            = pair.diff;
+                    state.current_step += 1;
+                    PROP_END
                     break;
                 }
             case 6:
                 {
-                    // d := c; c := propagate_add(b, d2)
-                    // Fresh run
-                    if (memcmp(&state, &stack.top().first, sizeof(struct prop_state)))
-                    {
-                        struct diff_vec diffs = propagate_add(state.d, state.d1, pthresh);
-                        if (diffs.len == 0) goto BAILOUT; // Dead end
-                        stack.push(std::make_pair(state, diffs));
-                    }
-
-                    // Pop the back element from the vec on the stack
-                    struct diff_vec *diffs = &stack.top().second;
-                    struct diff_prob pair  = diffs->pairs[--diffs->len];
-                    state.l2prob          += pair.l2prob;
-                    state.d                = state.c;
-                    state.c                = pair.diff;
-                    state.current_step    += 1;
-
-                    // If that was the last element, pop from stack
-                    if (diffs->len == 0)
-                    {
-                        free(diffs->pairs);
-                        stack.pop();
-                    }
+                    // t2 = sigma0(a)
+                    struct diff_prob pair = propagate_sigma0(state.a);
+                    state.t2              = pair.diff;
+                    state.current_step   += 1;
                     break;
                 }
             case 7:
                 {
-                    // b := a; a := propagate_add(d2, d5)
-                    // Fresh run
-                    if (memcmp(&state, &stack.top().first, sizeof(struct prop_state)))
-                    {
-                        struct diff_vec diffs = propagate_add(state.d2, state.d5, pthresh);
-                        if (diffs.len == 0) goto BAILOUT; // Dead end
-                        stack.push(std::make_pair(state, diffs));
-                    }
-
-                    // Pop the back element frmo the vec on the stack
-                    struct diff_vec *diffs = &stack.top().second;
-                    struct diff_prob pair  = diffs->pairs[--diffs->len];
-                    state.l2prob          += pair.l2prob;
-                    state.b                = state.a;
-                    state.a                = pair.diff;
-                    state.current_step     = 0;
-                    state.current_round   += 1;
-                    state.d0 = state.d1 = state.d2 = state.d3 = state.d4 = state.d5 = 0;
-
-                    // If that was the last element, pop from stack
-                    if (diffs->len == 0)
-                    {
-                        free(diffs->pairs);
-                        stack.pop();
-                    }
+                    // maj = maj(a, b, c)
+                    PROP_START(propagate_maj(state.a, state.b, state.c, pthresh));
+                    PROP_INTROS
+                    state.l2prob       += pair.l2prob;
+                    state.maj           = pair.diff;
+                    state.current_step += 1;
+                    PROP_END
                     break;
                 }
+
+            case 8:
+                {
+                    // t2 = t2 + maj
+                    PROP_START(propagate_add(state.t2, state.maj, pthresh));
+                    PROP_INTROS
+                    state.l2prob       += pair.l2prob;
+                    state.t2            = pair.diff;
+                    state.current_step += 1;
+                    PROP_END
+                    break;
+                }
+
+            case 9:
+                {
+                    // d = c; c = b + t1
+                    PROP_START(propagate_add(state.b, state.t1, pthresh));
+                    PROP_INTROS
+                    state.l2prob       += pair.l2prob;
+                    state.d             = state.c;
+                    state.c             = pair.diff;
+                    state.current_step += 1;
+                    PROP_END
+                    break;
+                }
+
+            case 10:
+                {
+                    // b = a; a = t1 + t2
+                    PROP_START(propagate_add(state.t1, state.t2, pthresh));
+                    PROP_INTROS
+                    state.l2prob        += pair.l2prob;
+                    state.b              = state.a;
+                    state.a              = pair.diff;
+                    state.tmp_diffs      = 0;
+                    state.current_step   = 0;
+                    state.current_round += 1;
+                    PROP_END
+                    break;
+                }
+            
             default: // Impossible
                 break;
         }
@@ -384,7 +404,7 @@ int main(int argc, char **argv)
 {
     // Consts
     unsigned int seed = time(NULL);
-    float pthresh = -4.0f;
+    float pthresh = -10.0f;
 
     // Set up the PRNG
     fprintf(stdout, "SEED: %u\n", seed);
@@ -392,7 +412,7 @@ int main(int argc, char **argv)
 
     // Build an input differential
     char *diff = make_input_diff();
-    size_t rounds = 8;
+    size_t rounds = 16;
 
     // Print the differential + round count
     for (int i = 1; i <= BLOCK_SIZE; i++)
@@ -401,9 +421,9 @@ int main(int argc, char **argv)
         if (!(i % 8)) putc('\n', stdout);
     }
     fprintf(stdout, "Rounds: %zu\n", rounds);
-    fprintf(stdout, "Threshold probability: 2^-%f\n\n", pthresh);
+    fprintf(stdout, "Threshold probability: 2^%f\n\n", pthresh);
     fflush(stdout);
     propagate(diff, rounds, pthresh);
     free(diff);
-    return 0;
+    return main(argc, argv);
 }
