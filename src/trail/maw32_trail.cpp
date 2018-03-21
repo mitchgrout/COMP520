@@ -12,8 +12,6 @@
 #define BLOCK_SIZE 64
 #define DIGEST_SIZE 32
 
-#define LOG2(x) log2f(x)
-
 static inline uint8_t rotr(uint8_t x, uint8_t n) { return (x >> n) | (x << (8 - n)); }
 static inline uint8_t maj(uint8_t x, uint8_t y, uint8_t z) { return (x & y) ^ (x & z) ^ (y & z); }
 static inline uint8_t sigma0(uint8_t x) { return rotr(x, 2) ^ rotr(x, 3) ^ rotr(x, 5); }
@@ -36,20 +34,22 @@ struct diff_vec
 
 struct prop_state
 {
-    size_t current_round;       // Which round we are currently propagating
-    size_t current_step;        // Which step in particular
-    float l2prob;               // Probability that our differential holds in log2
+    size_t round;               // Which round we are currently propagating
+    size_t step;                // Which step in particular
+    float l2prob;               // log2(prob) that our trail holds
+    uint8_t sched[16];          // Differences in message schedule
     union 
     {
-        uint8_t a, b, c, d;     // Differences in every register
-        uint32_t differential;  // Difference as a 32-bit int
+        struct { uint8_t a, b, c, d; }; // Current registers
+        uint32_t diff;          // Registers as a 32-bit int
     };
+    uint8_t t1, t2, maj;        // Differences in temporary variables
+    uint32_t tmp_diffs;         //
     union
     {
-        uint8_t t1, t2, maj;    // Differences in temporary variables
-        uint32_t tmp_diffs;     //
+        uint8_t trail[4*16];    // Trail of differences
+        uint32_t trail32[16];   //
     };
-    uint8_t W[16];              // Differences in message schedule
 };
 
 // Linear
@@ -182,28 +182,25 @@ void propagate(const char *msg_diff, const size_t n, const float pthresh)
     // For backtracking
     std::stack<std::pair<struct prop_state, struct diff_vec>> stack;
 
-    // Build the default prop_state object
+    // Build the default state objects
     struct prop_state sstate;
-    sstate.current_round = 0;
-    sstate.current_step  = 0;
-    sstate.l2prob        = 0.0f;
-    sstate.differential  = 0;
-    sstate.tmp_diffs     = 0;
+    memset(&sstate, 0, sizeof(sstate));
+    struct diff_vec svec = { NULL, 0 };
+
     // Set up the message schedule differentials; first 8 are concrete, but the
-    // last 8 can be variable
-    memset(sstate.W, 0, sizeof(sstate.W));
+    // last 8 will be variable (non-linear transforms of the message)
     for (int i = 0; i < 8; i++) 
     {
-        uint8_t m = 0x00;
+        uint8_t msg = 0x00;
         for (int j = 0; j < 8; j++)
         {
-            m |= msg_diff[8 * i + j] == 'x'? 1 : 0;
-            m <<= 1;
+            msg |= msg_diff[8 * i + j] == 'x'? 1 : 0;
+            msg <<= 1;
         }
-        sstate.W[i] = m;
+        sstate.sched[i] = msg;
     }
-    
-    struct diff_vec svec = { NULL, 0 };
+
+    // Push our start state onto the stack to to kickstart the propagation process
     stack.push(std::make_pair(sstate, svec));
    
     bool b = false;
@@ -218,35 +215,31 @@ void propagate(const char *msg_diff, const size_t n, const float pthresh)
         // !!!
 
         // Run this propagation through to completion
-        while (state.current_round < n) switch (state.current_step)
+        while (state.round < n) switch (state.step)
         {
-#define PROP_START(...)                                                         \
+            #define PROP_START(...)                                             \
             if (memcmp(&state, &stack.top().first, sizeof(struct prop_state)))  \
             {                                                                   \
                 struct diff_vec diffs = __VA_ARGS__;                            \
                 if (diffs.len == 0) goto BAILOUT;                               \
                 stack.push(std::make_pair(state, diffs));                       \
             }
-            
-#define PROP_INTROS                                                 \
+            #define PROP_INTROS                                   \
             struct diff_vec *diffs = &stack.top().second;         \
             struct diff_prob pair  = diffs->pairs[--diffs->len];
-
-#define PROP_END                    \
+            #define PROP_END        \
             if (diffs->len == 0)    \
             {                       \
                 free(diffs->pairs); \
                 stack.pop();        \
             }
-
-#define t (state.current_round)
+            #define t (state.round)
 
             case 0:
                 {
-                    // t1 = sigma1(b))
-                    struct diff_prob pair = propagate_sigma1(state.b);
-                    state.t1              = pair.diff;
-                    state.current_step   += 1;
+                    // t1 = sigma1(b)
+                    state.t1    = propagate_sigma1(state.b).diff;
+                    state.step += 1;
                     break;
                 }
 
@@ -255,9 +248,9 @@ void propagate(const char *msg_diff, const size_t n, const float pthresh)
                     // t1 = t1 + d
                     PROP_START(propagate_add(state.t1, state.d, pthresh));
                     PROP_INTROS
-                    state.l2prob       += pair.l2prob;
-                    state.t1            = pair.diff;
-                    state.current_step += 1;
+                    state.l2prob += pair.l2prob;
+                    state.t1      = pair.diff;
+                    state.step   += 1;
                     PROP_END
                     break;
                 }
@@ -265,11 +258,11 @@ void propagate(const char *msg_diff, const size_t n, const float pthresh)
             case 2:
                 {
                     // t1 = t1 + K[t]
-                    PROP_START(propagate_keymix(state.t1, state.current_round, pthresh));
+                    PROP_START(propagate_keymix(state.t1, state.round, pthresh));
                     PROP_INTROS
-                    state.l2prob       += pair.l2prob;
-                    state.t1            = pair.diff;
-                    state.current_step += t < 8? 3 : 1;
+                    state.l2prob += pair.l2prob;
+                    state.t1      = pair.diff;
+                    state.step   += t < 8? 3 : 1;
                     PROP_END
                     break;
                 }
@@ -277,24 +270,23 @@ void propagate(const char *msg_diff, const size_t n, const float pthresh)
             case 3:
                 {
                     // t >= 8: W[t] = sigma0(W[t-3]) + W[t-4]
-                    struct diff_prob sigma0_diff = propagate_sigma0(state.W[t - 3]);
-                    PROP_START(propagate_add(sigma0_diff.diff, state.W[t - 4], pthresh));
+                    PROP_START(propagate_add(propagate_sigma0(state.sched[t-3]).diff, state.sched[t-4], pthresh));
                     PROP_INTROS
-                    state.l2prob       += pair.l2prob;
-                    state.W[t]          = pair.diff;
-                    state.current_step += 1;
+                    state.l2prob  += pair.l2prob;
+                    state.sched[t] = pair.diff;
+                    state.step    += 1;
                     PROP_END
+                    break;
                 }
 
             case 4:
                 {
                     // t >= 8: W[t] = sigma1(W[t-8]) + W[t]
-                    struct diff_prob sigma1_diff = propagate_sigma1(state.W[t - 8]);
-                    PROP_START(propagate_add(sigma1_diff.diff, state.W[t], pthresh));
+                    PROP_START(propagate_add(propagate_sigma1(state.sched[t-8]).diff, state.sched[t], pthresh));
                     PROP_INTROS
-                    state.l2prob       += pair.l2prob;
-                    state.W[t]          = pair.diff;
-                    state.current_step += 1;
+                    state.l2prob  += pair.l2prob;
+                    state.sched[t] = pair.diff;
+                    state.step    += 1;
                     PROP_END
                     break;
                 }
@@ -302,20 +294,19 @@ void propagate(const char *msg_diff, const size_t n, const float pthresh)
             case 5:
                 {
                     // t1 = t1 + W[t]
-                    PROP_START(propagate_add(state.t1, state.W[t], pthresh));
+                    PROP_START(propagate_add(state.t1, state.sched[t], pthresh));
                     PROP_INTROS
-                    state.l2prob       += pair.l2prob;
-                    state.t1            = pair.diff;
-                    state.current_step += 1;
+                    state.l2prob += pair.l2prob;
+                    state.t1      = pair.diff;
+                    state.step   += 1;
                     PROP_END
                     break;
                 }
             case 6:
                 {
                     // t2 = sigma0(a)
-                    struct diff_prob pair = propagate_sigma0(state.a);
-                    state.t2              = pair.diff;
-                    state.current_step   += 1;
+                    state.t2    = propagate_sigma0(state.a).diff;
+                    state.step += 1;
                     break;
                 }
             case 7:
@@ -323,9 +314,9 @@ void propagate(const char *msg_diff, const size_t n, const float pthresh)
                     // maj = maj(a, b, c)
                     PROP_START(propagate_maj(state.a, state.b, state.c, pthresh));
                     PROP_INTROS
-                    state.l2prob       += pair.l2prob;
-                    state.maj           = pair.diff;
-                    state.current_step += 1;
+                    state.l2prob += pair.l2prob;
+                    state.maj     = pair.diff;
+                    state.step   += 1;
                     PROP_END
                     break;
                 }
@@ -335,9 +326,9 @@ void propagate(const char *msg_diff, const size_t n, const float pthresh)
                     // t2 = t2 + maj
                     PROP_START(propagate_add(state.t2, state.maj, pthresh));
                     PROP_INTROS
-                    state.l2prob       += pair.l2prob;
-                    state.t2            = pair.diff;
-                    state.current_step += 1;
+                    state.l2prob += pair.l2prob;
+                    state.t2      = pair.diff;
+                    state.step   += 1;
                     PROP_END
                     break;
                 }
@@ -347,10 +338,10 @@ void propagate(const char *msg_diff, const size_t n, const float pthresh)
                     // d = c; c = b + t1
                     PROP_START(propagate_add(state.b, state.t1, pthresh));
                     PROP_INTROS
-                    state.l2prob       += pair.l2prob;
-                    state.d             = state.c;
-                    state.c             = pair.diff;
-                    state.current_step += 1;
+                    state.l2prob += pair.l2prob;
+                    state.d       = state.c;
+                    state.c       = pair.diff;
+                    state.step   += 1;
                     PROP_END
                     break;
                 }
@@ -360,24 +351,44 @@ void propagate(const char *msg_diff, const size_t n, const float pthresh)
                     // b = a; a = t1 + t2
                     PROP_START(propagate_add(state.t1, state.t2, pthresh));
                     PROP_INTROS
-                    state.l2prob        += pair.l2prob;
-                    state.b              = state.a;
-                    state.a              = pair.diff;
-                    state.tmp_diffs      = 0;
-                    state.current_step   = 0;
-                    state.current_round += 1;
+                    state.l2prob += pair.l2prob;
+                    state.b       = state.a;
+                    state.a       = pair.diff;
+                   
+                    // Copy registers into trail
+                    state.trail[4*t+0] = state.a;
+                    state.trail[4*t+1] = state.b;
+                    state.trail[4*t+2] = state.c;
+                    state.trail[4*t+3] = state.d;
+
+                    // Reset temps
+                    state.t1     = 0;
+                    state.t2     = 0;
+                    state.maj    = 0;
+                    state.step   = 0;
+                    state.round += 1;
                     PROP_END
                     break;
                 }
             
             default: // Impossible
                 break;
+
+        #undef PROP_START
+        #undef PROP_INTROS
+        #undef PROP_END
+        #undef t
         }
         
         // Finished our search
-        if (state.current_round == n && state.differential == 0)
+        if (state.round == n && state.diff == 0)
         {
-            printf("Differential (0x%02x,0x%02x,0x%02x,0x%02x) ~ 2^%f\n", state.a, state.b, state.c, state.d, state.l2prob);
+            printf("0 -> ");
+            for (int i = 0; i < 16; i++)
+            {
+                printf("%x -> ", state.trail32[i]);
+            }
+            printf("* ~ 2^%f\n", state.l2prob);
         }
 BAILOUT: continue;
     }
@@ -402,28 +413,34 @@ char *make_input_diff()
 // Entry point
 int main(int argc, char **argv)
 {
-    // Consts
     unsigned int seed = time(NULL);
-    float pthresh = -10.0f;
-
-    // Set up the PRNG
-    fprintf(stdout, "SEED: %u\n", seed);
     srand(seed);
+    float pthresh = -4.0f;
 
-    // Build an input differential
-    char *diff = make_input_diff();
-    size_t rounds = 16;
-
-    // Print the differential + round count
-    for (int i = 1; i <= BLOCK_SIZE; i++)
+    do
     {
-        putc(diff[i-1], stdout);
-        if (!(i % 8)) putc('\n', stdout);
+        seed = rand();
+        
+        // Set up the PRNG
+        fprintf(stdout, "SEED: %u\n", seed);
+        srand(seed);
+
+        // Build an input differential
+        char *diff = make_input_diff();
+        size_t rounds = 8;
+
+        // Print the differential + round count
+        for (int i = 1; i <= BLOCK_SIZE; i++)
+        {
+            putc(diff[i-1], stdout);
+            if (!(i % 8)) putc('\n', stdout);
+        }
+        fprintf(stdout, "Rounds: %zu\n", rounds);
+        fprintf(stdout, "Threshold probability: 2^%f\n\n", pthresh);
+        fflush(stdout);
+        propagate(diff, rounds, pthresh);
+        free(diff);
     }
-    fprintf(stdout, "Rounds: %zu\n", rounds);
-    fprintf(stdout, "Threshold probability: 2^%f\n\n", pthresh);
-    fflush(stdout);
-    propagate(diff, rounds, pthresh);
-    free(diff);
-    return main(argc, argv);
+    while (1);
+    return 0;
 }
