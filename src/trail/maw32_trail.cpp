@@ -23,6 +23,29 @@ static inline uint8_t sigma0(const uint8_t x) { return rotr(x, 2) ^ rotr(x, 3) ^
 static inline uint8_t sigma1(const uint8_t x) { return rotr(x, 1) ^ rotr(x, 4) ^ (x >> 3); }
 static inline uint8_t add(const uint8_t x, const uint8_t y) { return x + y; }
 
+// Derivatives
+static inline uint8_t maj_diff(const uint8_t x,   const uint8_t y,   const uint8_t z,
+                               const uint8_t d_x, const uint8_t d_y, const uint8_t d_z)
+{
+    return maj(x, y, z) ^ maj(x^d_x, y^d_y, z^d_z);
+}
+
+static inline uint8_t add_diff(const uint8_t x,   const uint8_t y, 
+                               const uint8_t d_x, const uint8_t d_y)
+{
+    return add(x, y) ^ add(x ^ d_x, y ^ d_y);
+}
+
+static inline uint8_t keymix_diff(const uint8_t x, const uint8_t d_x, const size_t round)
+{
+    const uint8_t K[16] = 
+    {
+        0xb7, 0xe1, 0x51, 0x62, 0x8a, 0xed, 0x2a, 0x6a,
+        0xbf, 0x71, 0x58, 0x80, 0x9c, 0xf4, 0xf3, 0xc7
+    };
+    return add(x, K[round]) ^ add(x ^ d_x, K[round]);
+}
+
 // Propagation state
 struct prop_state
 {
@@ -75,17 +98,13 @@ static inline vector<uint8_t> filter(const map<uint8_t, size_t>& samples, const 
 
 // Nonlinear
 static map<uint16_t, vector<uint8_t>> key_memo;
+static inline uint16_t keymix_map_key(uint8_t d_x, uint8_t round) { return (d_x << 8) | (round & 0xf); }
 vector<uint8_t> propagate_keymix(const uint8_t d_x, const size_t round, const float l2pthresh)
 {
     // Memoization
-    uint16_t key = ((d_x << 8) | round) & 0xffff;
+    uint16_t key = keymix_map_key(d_x, round);
     if (key_memo.find(key) != key_memo.end()) return key_memo[key];
-
-    const uint8_t K[16] = 
-    {
-        0xb7, 0xe1, 0x51, 0x62, 0x8a, 0xed, 0x2a, 0x6a,
-        0xbf, 0x71, 0x58, 0x80, 0x9c, 0xf4, 0xf3, 0xc7
-    };
+    printf("Key memo missing: %d/%zu\n", d_x, round);
 
     const size_t sample_size = 256;
     map<uint8_t, size_t> counts;
@@ -94,7 +113,7 @@ vector<uint8_t> propagate_keymix(const uint8_t d_x, const size_t round, const fl
     for (int n = 0; n < sample_size; n++)
     {
         uint8_t x = n;
-        counts[add(K[round], x ^ d_x) ^ add(K[round], x)]++;
+        counts[keymix_diff(x, d_x, round)]++;
     }
     vector<uint8_t> result = filter(counts, sample_size, l2pthresh);
     key_memo[key] = result;
@@ -103,11 +122,13 @@ vector<uint8_t> propagate_keymix(const uint8_t d_x, const size_t round, const fl
 
 // Nonlinear
 static map<uint16_t, vector<uint8_t>> add_memo;
+static inline uint16_t add_map_key(uint8_t d_x, uint8_t d_y) { return (d_x << 8) | d_y; }
 vector<uint8_t> propagate_add(const uint8_t d_x, const uint8_t d_y, const float l2pthresh)
 {
     // Memoization
-    uint16_t key = ((d_x << 8) | d_y) & 0xffff;
+    uint16_t key = add_map_key(d_x, d_y);
     if (add_memo.find(key) != add_memo.end()) return add_memo[key];
+    printf("Add memo missing: %d/%d\n", d_x, d_y);
 
     const size_t sample_size = 256*256;
     map<uint8_t, size_t> counts;
@@ -117,7 +138,7 @@ vector<uint8_t> propagate_add(const uint8_t d_x, const uint8_t d_y, const float 
     {
         uint8_t x = (n >> 8) & 0xff,
                 y = (n >> 0) & 0xff;
-        counts[add(x ^ d_x, y ^ d_y) ^ add(x, y)]++;
+        counts[add_diff(x, y, d_x, d_y)]++;
     }
     vector<uint8_t> result = filter(counts, sample_size, l2pthresh);
     add_memo[key] = result;
@@ -126,23 +147,24 @@ vector<uint8_t> propagate_add(const uint8_t d_x, const uint8_t d_y, const float 
 
 // Nonlinear
 static map<uint32_t, vector<uint8_t>> maj_memo;
+static inline uint32_t maj_map_key(uint8_t d_x, uint8_t d_y, uint8_t d_z) { return (d_x << 16) | (d_y << 8) | d_z; }
 vector<uint8_t> propagate_maj(const uint8_t d_x, const uint8_t d_y, const uint8_t d_z, const float l2pthresh)
 {
     // Memoization
-    uint32_t key = ((d_x << 16) | (d_y << 8) | d_z);
+    uint32_t key = maj_map_key(d_x, d_y, d_z);
     if (maj_memo.find(key) != maj_memo.end()) return maj_memo[key];
+    printf("Maj memo missing: %d/%d/%d\n", d_x, d_y, d_z);
 
     const size_t sample_size = 256*256;
     map<uint8_t, size_t> counts;
 
     // Sample
-    // for (int x = 0; x < 256; x++) for (int y = 0; y < 256; y++) for (int z = 0; z < 256; z++)
     for (int n = 0; n < sample_size; n++)
     {
         uint8_t x = rand() & 0xff,
                 y = rand() & 0xff,
                 z = rand() & 0xff;
-        counts[maj(x ^ d_x, y ^ d_y, z ^ d_z) ^ maj(x, y, z)]++; 
+        counts[maj_diff(x, y, z, d_x, d_y, d_z)]++;
     }
     vector<uint8_t> result = filter(counts, sample_size, l2pthresh);
     maj_memo[key] = result;
@@ -150,14 +172,13 @@ vector<uint8_t> propagate_maj(const uint8_t d_x, const uint8_t d_y, const uint8_
 }
 
 // Take a differential, and propagate through to round n.
-void propagate(const char *msg_diff, size_t n, const float pthresh)
+pair<size_t, size_t> propagate(const char *msg_diff, size_t n, const float pthresh)
 {
     // 16 rounds max
     if (n > 16)
     {
         n = 16;
         fprintf(stderr, "Warning: Cannot propagate over more than 16 rounds maximum.\n");
-        return;
     }
 
     // Statistics
@@ -238,55 +259,55 @@ void propagate(const char *msg_diff, size_t n, const float pthresh)
                     {
                         // t1 = t1 + d
                         PROP_START(propagate_add(state.t1, state.d, pthresh));
-                        PROP_INTROS
-                            state.t1      = diff;
-                        state.step   += 1;
-                        PROP_END
-                            break;
+                        PROP_INTROS;
+                        state.t1    = diff;
+                        state.step += 1;
+                        PROP_END;
+                        break;
                     }
 
                 case 2:
                     {
                         // t1 = t1 + K[t]
                         PROP_START(propagate_keymix(state.t1, state.round, pthresh));
-                        PROP_INTROS
-                            state.t1      = diff;
-                        state.step   += t < 8? 3 : 1;
-                        PROP_END
-                            break;
+                        PROP_INTROS;
+                        state.t1    = diff;
+                        state.step += t < 8? 3 : 1;
+                        PROP_END;
+                        break;
                     }
 
                 case 3:
                     {
                         // t >= 8: W[t] = sigma0(W[t-3]) + W[t-4]
                         PROP_START(propagate_add(propagate_sigma0(state.sched[t-3]), state.sched[t-4], pthresh));
-                        PROP_INTROS
-                            state.sched[t] = diff;
+                        PROP_INTROS;
+                        state.sched[t] = diff;
                         state.step    += 1;
-                        PROP_END
-                            break;
+                        PROP_END;
+                        break;
                     }
 
                 case 4:
                     {
                         // t >= 8: W[t] = sigma1(W[t-8]) + W[t]
                         PROP_START(propagate_add(propagate_sigma1(state.sched[t-8]), state.sched[t], pthresh));
-                        PROP_INTROS
-                            state.sched[t] = diff;
+                        PROP_INTROS;
+                        state.sched[t] = diff;
                         state.step    += 1;
-                        PROP_END
-                            break;
+                        PROP_END;
+                        break;
                     }
 
                 case 5:
                     {
                         // t1 = t1 + W[t]
                         PROP_START(propagate_add(state.t1, state.sched[t], pthresh));
-                        PROP_INTROS
-                            state.t1      = diff;
-                        state.step   += 1;
-                        PROP_END
-                            break;
+                        PROP_INTROS;
+                        state.t1    = diff;
+                        state.step += 1;
+                        PROP_END;
+                        break;
                     }
                 case 6:
                     {
@@ -299,57 +320,57 @@ void propagate(const char *msg_diff, size_t n, const float pthresh)
                     {
                         // maj = maj(a, b, c)
                         PROP_START(propagate_maj(state.a, state.b, state.c, pthresh));
-                        PROP_INTROS
-                            state.maj     = diff;
-                        state.step   += 1;
-                        PROP_END
-                            break;
+                        PROP_INTROS;
+                        state.maj   = diff;
+                        state.step += 1;
+                        PROP_END;
+                        break;
                     }
 
                 case 8:
                     {
                         // t2 = t2 + maj
                         PROP_START(propagate_add(state.t2, state.maj, pthresh));
-                        PROP_INTROS
-                            state.t2      = diff;
-                        state.step   += 1;
-                        PROP_END
-                            break;
+                        PROP_INTROS;
+                        state.t2    = diff;
+                        state.step += 1;
+                        PROP_END;
+                        break;
                     }
 
                 case 9:
                     {
                         // d = c; c = b + t1
                         PROP_START(propagate_add(state.b, state.t1, pthresh));
-                        PROP_INTROS
-                            state.d       = state.c;
-                        state.c       = diff;
-                        state.step   += 1;
-                        PROP_END
-                            break;
+                        PROP_INTROS;
+                        state.d     = state.c;
+                        state.c     = diff;
+                        state.step += 1;
+                        PROP_END;
+                        break;
                     }
 
                 case 10:
                     {
                         // b = a; a = t1 + t2
                         PROP_START(propagate_add(state.t1, state.t2, pthresh));
-                        PROP_INTROS
-                            state.b          = state.a;
+                        PROP_INTROS;
+                        state.b          = state.a;
                         state.a          = diff;
                         state.trail32[t] = state.diff;
                         state.step       = 0;
                         state.round     += 1;
-                        PROP_END
-                            break;
+                        PROP_END;
+                        break;
                     }
 
                 default: // Impossible
                     break;
 
-            #undef PROP_START
-            #undef PROP_INTROS
-            #undef PROP_END
-            #undef t
+                #undef PROP_START
+                #undef PROP_INTROS
+                #undef PROP_END
+                #undef t
             }
         }
         // Finished our search
@@ -364,9 +385,7 @@ BAILOUT:
             total_trails++;
         }
     }
-    time_t end_time = time(NULL);
-    printf("Elapsed time: %ld sec\n", end_time - start_time);
-    printf("Zero trails: %zu/%zu\n\n", zero_trails, total_trails);
+    return make_pair(zero_trails, total_trails);
 }
 
 // Create an input differential randomly
@@ -379,7 +398,7 @@ char *make_input_diff()
     // Randomly assign the remaining dense area
     for (size_t idx = 4*8; idx < BLOCK_SIZE; idx++)
     {
-        diff[idx] = (rand() & 1)? '-' : 'x';
+        diff[idx] = (rand() % 3)? '-' : 'x';
     }
     diff[BLOCK_SIZE] = '\0';
     return diff;
@@ -390,31 +409,77 @@ int main(int argc, char **argv)
 {
     unsigned int seed = time(NULL);
     srand(seed);
-    const float pthresh = -4.0f;
+    const float pthresh = -3.000000f;
+    const size_t rounds = 16;
+    uint8_t buffer[512];
+
+    if (FILE *key_file = fopen("/Scratch/key-file-3.000000.bin", "r"))
+    {
+        while (1)
+        {
+            // Read in the 3 arguments, giving up if we can't read every one
+            if (fread(buffer, sizeof(uint8_t), 3, key_file) != 3) break;
+            uint8_t d_x = buffer[0], round = buffer[1], len = buffer[2];
+            // Then read the contents, and copy them in to the map
+            if (fread(buffer, sizeof(uint8_t), len, key_file) != len) break; 
+            vector<uint8_t> result(buffer, buffer + len);
+            key_memo[keymix_map_key(d_x, round)] = result;
+        }
+        fclose(key_file);
+    }
+
+    if (FILE *add_file = fopen("/Scratch/add-file-3.000000.bin", "r"))
+    {
+        while (1)
+        {
+            // Read in the 3 arguments, giving up if we can't read every one
+            if (fread(buffer, sizeof(uint8_t), 3, add_file) != 3) break;
+            uint8_t d_x = buffer[0], d_y = buffer[1], len = buffer[2];
+            // Then read the contents, and copy them in to the map
+            if (fread(buffer, sizeof(uint8_t), len, add_file) != len) break; 
+            vector<uint8_t> result(buffer, buffer + len);
+            add_memo[add_map_key(d_x, d_y)] = result;
+        }
+        fclose(add_file);
+    }
+
+    if (FILE *maj_file = fopen("/Scratch/maj-file-3.000000.bin", "r"))
+    {
+        while (1)
+        {
+            // Read in the 4 arguments, giving up if we can't read every one
+            if (fread(buffer, sizeof(uint8_t), 4, maj_file) != 4) break;
+            uint8_t d_x = buffer[0], d_y = buffer[1], d_z = buffer[2], len = buffer[3];
+            // Then read the contents, and copy them in to the map
+            if (fread(buffer, sizeof(uint8_t), len, maj_file) != len) break; 
+            vector<uint8_t> result(buffer, buffer + len);
+            maj_memo[maj_map_key(d_x, d_y, d_z)] = result;
+        }
+        fclose(maj_file);
+    }
 
     do
     {
+        // Reseed so we can deterministically perform a propagation
         seed = rand();
-        
-        // Set up the PRNG
-        fprintf(stdout, "SEED: %u\n", seed);
         srand(seed);
 
-        // Build an input differential
+        // Build an input differential, print it out
         char *diff = make_input_diff();
-        size_t rounds = 16;
-
-        // Print the differential + round count
-        for (int i = 1; i <= BLOCK_SIZE; i++)
+        pair<size_t, size_t> result = propagate(diff, rounds, pthresh);
+        if (result.first)
         {
-            putc(diff[i-1], stdout);
-            if (!(i % 8)) putc('\n', stdout);
+            for (int i = 1; i <= BLOCK_SIZE; i++)
+            {
+                putc(diff[i-1], stdout);
+                if (!(i % 8)) putc('\n', stdout);
+            }
+            fprintf(stdout, "Seed: %u\n", seed);
+            fprintf(stdout, "Rounds: %zu\n", rounds);
+            fprintf(stdout, "Threshold probability: 2^%f\n", pthresh);
+            fprintf(stdout, "Trails: %zu/%zu\n", result.first, result.second);
+            fflush(stdout);
         }
-        fprintf(stdout, "Rounds: %zu\n", rounds);
-        fprintf(stdout, "Threshold probability: 2^%f\n", pthresh);
-        fprintf(stdout, "==================================\n");
-        propagate(diff, rounds, pthresh);
-        fflush(stdout);
         free(diff);
     }
     while (1);

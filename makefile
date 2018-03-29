@@ -1,14 +1,20 @@
+CFLAGS=-g -std=c99 -march=native -Ofast
+CPPFLAGS=-g -std=c++11 -march=native -Ofast
+
 all: hash diffs trail
 
 hash: 
-	gcc -g -std=c99 -Ofast -o hash `find src/hash/ -name "*.c"` `find src/hash/ -name "*.h"`
+	gcc $(CFLAGS) -o hash `find src/hash/ -name "*.c"` `find src/hash/ -name "*.h"`
 
 diffs:
-	gcc -g -std=c99 -Ofast -o maw_diffs `find src/diffs/ -name "*.c"` `find src/diffs/ -name "*.h"`
+	gcc $(CFLAGS) -o maw_diffs `find src/diffs/ -name "*.c"` `find src/diffs/ -name "*.h"`
 
 trail:
-	g++ -g -std=c++11 -march=native -Ofast -o maw_trail `find src/trail/ -name "*.cpp"` `find src/trail/ -name "*.h"` -lm
+	g++ $(CPPFLAGS) -o maw_trail `find src/trail/ -name "*.cpp"` -lm
+
+trail_gen:
+	g++ $(CPPFLAGS) -o maw_trail_gen `find src/trail_gen/ -name "*.cpp"` -lm
 
 .PHONY: clean
 clean: 
-	rm hash maw_diffs maw_trail
+	rm hash maw_diffs maw_trail maw_trail_gen
