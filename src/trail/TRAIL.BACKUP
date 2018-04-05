@@ -1,20 +1,73 @@
-// Core logic for propagating differences through MAW32
-
-#ifndef __TRAIL
-#define __TRAIL
-#include <math.h>
-#include <stdint.h>
+// libc
+#include <stdio.h>
 #include <string.h>
-#include "maw32_utils.cpp"
-#include "utils.cpp"
+#include <stdlib.h>
+#include <time.h>
+#include <stdint.h>
+#include <math.h>
+#include <stdarg.h>
 
-// STL containers
-#include <map>
-#include <vector>
+// STL
 #include <stack>
-#include <utility>
+#include <vector>
+#include <map>
 using namespace std;
 
+// Log to stream
+static inline void log(FILE *stream, const char *fmt, ...)
+{
+    // Print timestamp
+    {
+        char buf[8+1];
+        time_t t;
+        time(&t);
+        struct tm *info = localtime(&t);
+        strftime(buf, 9, "%H:%M:%S", info);
+        fprintf(stream, "[%s] ", buf);
+    }
+    // Print fmt
+    {
+        va_list args;
+        va_start(args, fmt);
+        vfprintf(stream, fmt, args);
+        fputc('\n', stream);
+        va_end(args);
+    }
+}
+
+// Consts
+#define BLOCK_SIZE 64
+#define DIGEST_SIZE 32
+
+// MAW internals
+static inline uint8_t rotr(const uint8_t x, const uint8_t n) { return (x >> n) | (x << (8 - n)); }
+static inline uint8_t maj(const uint8_t x, const uint8_t y, const uint8_t z) { return (x & y) ^ (x & z) ^ (y & z); }
+static inline uint8_t sigma0(const uint8_t x) { return rotr(x, 2) ^ rotr(x, 3) ^ rotr(x, 5); }
+static inline uint8_t sigma1(const uint8_t x) { return rotr(x, 1) ^ rotr(x, 4) ^ (x >> 3); }
+static inline uint8_t add(const uint8_t x, const uint8_t y) { return x + y; }
+
+// Derivatives
+static inline uint8_t maj_diff(const uint8_t x,   const uint8_t y,   const uint8_t z,
+                               const uint8_t d_x, const uint8_t d_y, const uint8_t d_z)
+{
+    return maj(x, y, z) ^ maj(x^d_x, y^d_y, z^d_z);
+}
+
+static inline uint8_t add_diff(const uint8_t x,   const uint8_t y, 
+                               const uint8_t d_x, const uint8_t d_y)
+{
+    return add(x, y) ^ add(x ^ d_x, y ^ d_y);
+}
+
+static inline uint8_t keymix_diff(const uint8_t x, const uint8_t d_x, const size_t round)
+{
+    const uint8_t K[16] = 
+    {
+        0xb7, 0xe1, 0x51, 0x62, 0x8a, 0xed, 0x2a, 0x6a,
+        0xbf, 0x71, 0x58, 0x80, 0x9c, 0xf4, 0xf3, 0xc7
+    };
+    return add(x, K[round]) ^ add(x ^ d_x, K[round]);
+}
 
 // Propagation state
 struct prop_state
@@ -35,14 +88,26 @@ struct prop_state
     };
 };
 
-// Determine if two states are equal 
+// Util 
 static inline int prop_state_equal(const struct prop_state left, const struct prop_state right)
 {
     return left.round == right.round &&
            left.step  == right.step; 
 }
 
-// Utility to filter out statistically insignificant results
+// Linear
+static inline uint8_t propagate_sigma0(const uint8_t d_m)
+{
+    return sigma0(0 ^ d_m) ^ sigma0(0);
+}
+
+// Linear
+static inline uint8_t propagate_sigma1(const uint8_t d_m)
+{
+    return sigma1(0 ^ d_m) ^ sigma1(0);
+}
+
+// Util
 static inline vector<uint8_t> filter(const map<uint8_t, size_t>& samples, const size_t sample_size, const float l2pthresh)
 {
     vector<uint8_t> results;
@@ -54,98 +119,10 @@ static inline vector<uint8_t> filter(const map<uint8_t, size_t>& samples, const 
     return results;
 }
 
-// Memo tables
+// Nonlinear
 static map<uint16_t, vector<uint8_t>> key_memo;
-static map<uint16_t, vector<uint8_t>> add_memo;
-static map<uint32_t, vector<uint8_t>> maj_memo;
-
-// Key functions for memo tables
-static inline uint16_t keymix_map_key(const uint8_t d_x, const uint8_t round)
-{
-    return (d_x << 8) | (round & 0xf);
-}
-
-static inline uint16_t add_map_key(const uint8_t d_x, const uint8_t d_y)
-{
-    return (d_x << 8) | d_y;
-}
-
-static inline uint32_t maj_map_key(const uint8_t d_x, const uint8_t d_y, const uint8_t d_z)
-{
-    return (d_x << 16) | (d_y << 8) | d_z; 
-}
-
-// Load memo tables from file
-static bool load_key_memo(const char *fname)
-{
-    uint8_t buffer[256];
-    FILE *key_file = fopen(fname, "r");
-    if (!key_file) return false;
-    while (1)
-    {
-        // Read in the 3 arguments, giving up if we can't read every one
-        if (fread(buffer, sizeof(uint8_t), 3, key_file) != 3) break;
-        uint8_t d_x = buffer[0], round = buffer[1], len = buffer[2];
-        // Then read the contents, and copy them in to the map
-        if (fread(buffer, sizeof(uint8_t), len, key_file) != len) break; 
-        vector<uint8_t> result(buffer, buffer + len);
-        key_memo[keymix_map_key(d_x, round)] = result;
-    }
-    fclose(key_file);
-    return true;
-}
-
-static bool load_add_memo(const char *fname)
-{
-    uint8_t buffer[256];
-    FILE *add_file = fopen(fname, "r");
-    if (!add_file) return false;
-    while (1)
-    {
-        // Read in the 3 arguments, giving up if we can't read every one
-        if (fread(buffer, sizeof(uint8_t), 3, add_file) != 3) break;
-        uint8_t d_x = buffer[0], d_y = buffer[1], len = buffer[2];
-        // Then read the contents, and copy them in to the map
-        if (fread(buffer, sizeof(uint8_t), len, add_file) != len) break; 
-        vector<uint8_t> result(buffer, buffer + len);
-        add_memo[add_map_key(d_x, d_y)] = result;
-    }
-    fclose(add_file);
-    return true;
-}
-
-static bool load_maj_memo(const char *fname)
-{
-    uint8_t buffer[256];
-    FILE *maj_file = fopen(fname, "r");
-    if (!maj_file) return false;
-    while (1)
-    {
-        // Read in the 4 arguments, giving up if we can't read every one
-        if (fread(buffer, sizeof(uint8_t), 4, maj_file) != 4) break;
-        uint8_t d_x = buffer[0], d_y = buffer[1], d_z = buffer[2], len = buffer[3];
-        // Then read the contents, and copy them in to the map
-        if (fread(buffer, sizeof(uint8_t), len, maj_file) != len) break; 
-        vector<uint8_t> result(buffer, buffer + len);
-        maj_memo[maj_map_key(d_x, d_y, d_z)] = result;
-    }
-    fclose(maj_file);
-    return true; 
-}
-
-// Propagation through various components
-static inline uint8_t propagate_sigma0(const uint8_t d_m)
-{
-    return sigma0(0 ^ d_m) ^ sigma0(0);
-}
-
-// Propapate the difference d_m through sigma1
-static inline uint8_t propagate_sigma1(const uint8_t d_m)
-{
-    return sigma1(0 ^ d_m) ^ sigma1(0);
-}
-
-static vector<uint8_t> propagate_keymix(const uint8_t d_x, const size_t round, const float l2pthresh)
+static inline uint16_t keymix_map_key(uint8_t d_x, uint8_t round) { return (d_x << 8) | (round & 0xf); }
+vector<uint8_t> propagate_keymix(const uint8_t d_x, const size_t round, const float l2pthresh)
 {
     // Memoization
     uint16_t key = keymix_map_key(d_x, round);
@@ -166,7 +143,10 @@ static vector<uint8_t> propagate_keymix(const uint8_t d_x, const size_t round, c
     return result;
 }
 
-static vector<uint8_t> propagate_add(const uint8_t d_x, const uint8_t d_y, const float l2pthresh)
+// Nonlinear
+static map<uint16_t, vector<uint8_t>> add_memo;
+static inline uint16_t add_map_key(uint8_t d_x, uint8_t d_y) { return (d_x << 8) | d_y; }
+vector<uint8_t> propagate_add(const uint8_t d_x, const uint8_t d_y, const float l2pthresh)
 {
     // Memoization
     uint16_t key = add_map_key(d_x, d_y);
@@ -188,7 +168,10 @@ static vector<uint8_t> propagate_add(const uint8_t d_x, const uint8_t d_y, const
     return result;
 }
 
-static vector<uint8_t> propagate_maj(const uint8_t d_x, const uint8_t d_y, const uint8_t d_z, const float l2pthresh)
+// Nonlinear
+static map<uint32_t, vector<uint8_t>> maj_memo;
+static inline uint32_t maj_map_key(uint8_t d_x, uint8_t d_y, uint8_t d_z) { return (d_x << 16) | (d_y << 8) | d_z; }
+vector<uint8_t> propagate_maj(const uint8_t d_x, const uint8_t d_y, const uint8_t d_z, const float l2pthresh)
 {
     // Memoization
     uint32_t key = maj_map_key(d_x, d_y, d_z);
@@ -212,7 +195,7 @@ static vector<uint8_t> propagate_maj(const uint8_t d_x, const uint8_t d_y, const
 }
 
 // Take a differential, and propagate through to round n.
-static pair<size_t, size_t> propagate(const uint8_t *msg_diff, const size_t n, const float pthresh)
+pair<size_t, size_t> propagate(const uint8_t *msg_diff, const size_t n, const float pthresh)
 {
     // Must have a message diff
     if (!msg_diff)
@@ -430,4 +413,147 @@ BAILOUT:
     }
     return make_pair(zero_trails, total_trails);
 }
-#endif // __TRAIL
+
+// Determine if an input differential is viable
+static inline bool is_viable(uint8_t *W, const size_t rounds, const float l2pthresh,
+                             size_t t, size_t ctr)
+{
+    if (t >= 16) return ctr >= 0;   // 2/8
+    uint8_t w0 = sigma0(W[t-3]),
+            w1 = sigma1(W[t-8]);
+    for (uint8_t t1: propagate_add(w0, w1, l2pthresh))
+    for (uint8_t t2: propagate_add(W[t-4], t1, l2pthresh))
+    {
+        W[t] = t2;
+        if (is_viable(W, rounds, l2pthresh, t+1, ctr + !t2)) return true;
+    }
+    return false;
+}
+
+// Successor of an array of bytes
+static inline bool succ(uint8_t *ptr, size_t len)
+{
+    // Increment elements right-to-left, stopping if there is no carry
+    while (len) if (++ptr[--len]) return true;
+    return false;
+}
+
+// Create an input differential randomly
+uint8_t *make_input_diff(size_t rounds, float l2pthresh)
+{
+    // The entire message schedule
+    static uint8_t sched[16];
+
+    // Randomly assign differences for last three words
+    for (int idx = 0; idx < 8; idx++)
+    {
+        sched[idx] = (idx < 4)? 0 : rand();
+    }
+    // If not viable, mutate slightly
+    while (!is_viable(sched, rounds, l2pthresh, 8, 0)) succ(sched, 8) ;
+    return sched;
+}
+
+// Entry point
+int main(int argc, char **argv)
+{
+    unsigned int seed = time(NULL);
+    srand(seed);
+    const float pthresh = -4.000000f;
+    const size_t rounds = 16;
+    uint8_t buffer[512];
+
+    log(stdout, "Initializing...");
+    if (FILE *key_file = fopen("/Scratch/key-file-4.000000.bin", "r"))
+    {
+        while (1)
+        {
+            // Read in the 3 arguments, giving up if we can't read every one
+            if (fread(buffer, sizeof(uint8_t), 3, key_file) != 3) break;
+            uint8_t d_x = buffer[0], round = buffer[1], len = buffer[2];
+            // Then read the contents, and copy them in to the map
+            if (fread(buffer, sizeof(uint8_t), len, key_file) != len) break; 
+            vector<uint8_t> result(buffer, buffer + len);
+            key_memo[keymix_map_key(d_x, round)] = result;
+        }
+        fclose(key_file);
+        log(stdout, "Loaded key memos!");
+    }
+    else
+    {
+        log(stdout, "No key memos found!");
+    }
+
+    if (FILE *add_file = fopen("/Scratch/add-file-4.000000.bin", "r"))
+    {
+        while (1)
+        {
+            // Read in the 3 arguments, giving up if we can't read every one
+            if (fread(buffer, sizeof(uint8_t), 3, add_file) != 3) break;
+            uint8_t d_x = buffer[0], d_y = buffer[1], len = buffer[2];
+            // Then read the contents, and copy them in to the map
+            if (fread(buffer, sizeof(uint8_t), len, add_file) != len) break; 
+            vector<uint8_t> result(buffer, buffer + len);
+            add_memo[add_map_key(d_x, d_y)] = result;
+        }
+        fclose(add_file);
+        log(stdout, "Loaded add memos!");
+    }
+    else
+    {
+        log(stdout, "No add memos found!");
+    }
+
+    if (FILE *maj_file = fopen("/Scratch/maj-file-4.000000.bin", "r"))
+    {
+        while (1)
+        {
+            // Read in the 4 arguments, giving up if we can't read every one
+            if (fread(buffer, sizeof(uint8_t), 4, maj_file) != 4) break;
+            uint8_t d_x = buffer[0], d_y = buffer[1], d_z = buffer[2], len = buffer[3];
+            // Then read the contents, and copy them in to the map
+            if (fread(buffer, sizeof(uint8_t), len, maj_file) != len) break; 
+            vector<uint8_t> result(buffer, buffer + len);
+            maj_memo[maj_map_key(d_x, d_y, d_z)] = result;
+        }
+        fclose(maj_file);
+        log(stdout, "Loaded maj memos!");
+    }
+    else
+    {
+        log(stdout, "No maj memos found!");
+    }
+    log(stdout, "Initialization finished.");
+
+    do
+    {
+        // Reseed so we can deterministically perform a propagation
+        seed = rand();
+        srand(seed);
+
+        // Build an input differential, print it out
+        uint8_t *diff = make_input_diff(rounds, pthresh);
+        log(stdout, "Fingerprint:");
+        for (int i = 0; i < 8; i++)
+        {
+            #define C2B(c) ((c)? 'x' : '-')
+            log(stdout, "%c%c%c%c%c%c%c%c", 
+                    C2B(diff[i] & 0x80),
+                    C2B(diff[i] & 0x40),
+                    C2B(diff[i] & 0x20),
+                    C2B(diff[i] & 0x10),
+                    C2B(diff[i] & 0x08),
+                    C2B(diff[i] & 0x04),
+                    C2B(diff[i] & 0x02),
+                    C2B(diff[i] & 0x01));
+            #undef C2B
+        }
+        log(stdout, "Seed: %u", seed);
+        log(stdout, "Rounds: %zu/16", rounds);
+        log(stdout, "Threshold probability: 2^%f", pthresh);
+        pair<size_t, size_t> result = propagate(diff, rounds, pthresh);
+        log(stdout, "Trails: %zu/%zu\n", result.first, result.second);
+    }
+    while (1);
+    return 0;
+}

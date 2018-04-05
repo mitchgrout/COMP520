@@ -10,7 +10,7 @@ diffs:
 	gcc $(CFLAGS) -o maw_diffs `find src/diffs/ -name "*.c"` `find src/diffs/ -name "*.h"`
 
 trail:
-	g++ $(CPPFLAGS) -o maw_trail `find src/trail/ -name "*.cpp"` -lm
+	g++ $(CPPFLAGS) -o maw_trail `find src/trail/ -name "*.cpp"` `find src/trail/ -name "*.hpp"` -lm
 
 trail_gen:
 	g++ $(CPPFLAGS) -o maw_trail_gen `find src/trail_gen/ -name "*.cpp"` -lm
