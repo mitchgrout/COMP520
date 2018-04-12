@@ -65,9 +65,10 @@
 // Params:
 // - ptr: A non-null pointer to an array of data to hash
 // - len: The length of ptr in bytes
+// - rounds: How many rounds of the hash function to run
 // - buf: A block of at least 16+1 bytes in which to store the hash; if null, 
 //        a local buffer will be used
 // Returns: The string representation of the 32-bit digest. If buf is NULL,
 //          this will be a local buffer, otherwise buf will be returned. If
 //          ptr is NULL, then NULL is returned
-char *maw32_hash(const uint8_t *ptr, size_t len, char *buf);
+char *maw32_hash(const uint8_t *ptr, size_t len, size_t rounds, char *buf);

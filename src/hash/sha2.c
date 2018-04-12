@@ -7,8 +7,8 @@
 #include "util.h"
 
 // SHA-256:
-#define SHA256_BLOCK_SIZE  64   // 512 bits => 64 bytes for every block
-#define SHA256_DIGEST_SIZE 32   // 256 bits => 32 bytes for the digest
+#define SHA256_BLOCK_SIZE  64 // 512 bits => 64 bytes for every block
+#define SHA256_DIGEST_SIZE 32 // 256 bits => 32 bytes for the digest
 static inline uint32_t ch32(uint32_t x, uint32_t y, uint32_t z)  { return (x & y) ^ ((~x) & z);        }
 static inline uint32_t maj32(uint32_t x, uint32_t y, uint32_t z) { return (x & y) ^ (x & z) ^ (y & z); }
 static inline uint32_t Sigma0_256(uint32_t x) { return rotr32(x, 2)  ^ rotr32(x, 13) ^ rotr32(x, 22);  }
@@ -17,8 +17,8 @@ static inline uint32_t sigma0_256(uint32_t x) { return rotr32(x, 7)  ^ rotr32(x,
 static inline uint32_t sigma1_256(uint32_t x) { return rotr32(x, 17) ^ rotr32(x, 19) ^ (x >> 10);      }
 
 // SHA-512:
-#define SHA512_BLOCK_SIZE  128  // 1024 bits => 128 bytes for every block
-#define SHA512_DIGEST_SIZE 64   // 512 bits  => 64  bytes for every block
+#define SHA512_BLOCK_SIZE  128 // 1024 bits => 128 bytes for every block
+#define SHA512_DIGEST_SIZE 64  // 512 bits  => 64  bytes for every block
 static inline uint32_t ch64(uint32_t x, uint32_t y, uint32_t z)  { return (x & y) ^ ((~x) & z);        }
 static inline uint32_t maj64(uint32_t x, uint32_t y, uint32_t z) { return (x & y) ^ (x & z) ^ (y & z); }
 static inline uint32_t Sigma0_512(uint32_t x) { return rotr64(x, 28) ^ rotr64(x, 34) ^ rotr64(x, 39);  }
@@ -104,15 +104,19 @@ static uint8_t *next_block(const uint8_t *ptr, size_t len)
 // Params:
 // - ptr: A non-null pointer to an array of data to hash
 // - len: The length of ptr in bytes
+// - rounds: How many rounds of the hash function to run
 // - buf: A block of at least 32+1 bytes in which to store the hash; if null,
 //        a local buffer will be used
 // Returns: The string representation of the 256-bit digest. If buf is NULL,
 //          this will be a local buffer, otherwise buf will be returned. If
 //          ptr is NULL, then NULL is returned
-char *sha256_hash(const uint8_t *ptr, size_t len, char *buf)
+char *sha256_hash(const uint8_t *ptr, size_t len, size_t rounds, char *buf)
 {
     // No pointer
     if (!ptr) { return NULL; }
+
+    // Ensure rounds is valid
+    if (rounds > 64) rounds = 64;  
 
     // Set up the IV
     uint32_t H[8] = 
@@ -146,7 +150,7 @@ char *sha256_hash(const uint8_t *ptr, size_t len, char *buf)
         uint32_t W[64];
 
         // Transform this block
-        for (int t = 0; t < 64; t++)
+        for (int t = 0; t < rounds; t++)
         {
             // Set up the message schedule for this round
             if (t < 16) { W[t] = b2h32(((uint32_t *)M)[t]); }
