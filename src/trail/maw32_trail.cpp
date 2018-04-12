@@ -236,21 +236,17 @@ static pair<size_t, size_t> propagate(const uint8_t *msg_diff, const size_t n, c
     // Statistics
     size_t total_trails = 0,
            zero_trails  = 0;
-    time_t start_time = time(NULL);
 
     // Backtracking value
-    stack<pair<struct prop_state, vector<uint8_t>>> stack;
+#define STACK_ELEM pair<struct prop_state, vector<uint8_t>>
+    stack<STACK_ELEM, vector<STACK_ELEM>> stack;
+#undef STACK_ELEM
 
-    // Build the default state objects
+    // Build and push the default state objects
     struct prop_state sstate;
     memset(&sstate, 0, sizeof(sstate));
+    memcpy(sstate.sched, msg_diff, 8 * sizeof(uint8_t));
     vector<uint8_t> svec;
-
-    // Set up the message schedule differentials; first 8 are concrete, but the
-    // last 8 will be variable (non-linear transforms of the message)
-    for (int i = 0; i < 8; i++) sstate.sched[i] = msg_diff[i];
-
-    // Push our start state onto the stack to to kickstart the propagation process
     stack.push(make_pair(sstate, svec));
    
     bool b = false;
@@ -259,7 +255,8 @@ static pair<size_t, size_t> propagate(const uint8_t *msg_diff, const size_t n, c
     {
         // Grab the propagation state on top
         struct prop_state state = stack.top().first;
-        // !!! Somehow need for force sstate off the stack
+        // Give up if we find sstate again
+        // !!! 
         if (b && prop_state_equal(sstate, state)) break;
         b = true;
         // !!!
@@ -290,17 +287,15 @@ static pair<size_t, size_t> propagate(const uint8_t *msg_diff, const size_t n, c
 
                 #define t (state.round)
 
-                case 0:
+                case 0: // t1 = sigma1(b)
                     {
-                        // t1 = sigma1(b)
                         state.t1    = propagate_sigma1(state.b);
                         state.step += 1;
                         break;
                     }
 
-                case 1:
+                case 1: // t1 = t1 + d
                     {
-                        // t1 = t1 + d
                         PROP_START(propagate_add(state.t1, state.d, pthresh));
                         PROP_INTROS;
                         state.t1    = diff;
@@ -309,9 +304,8 @@ static pair<size_t, size_t> propagate(const uint8_t *msg_diff, const size_t n, c
                         break;
                     }
 
-                case 2:
+                case 2: // t1 = t1 + K[t]
                     {
-                        // t1 = t1 + K[t]
                         PROP_START(propagate_keymix(state.t1, state.round, pthresh));
                         PROP_INTROS;
                         state.t1    = diff;
@@ -320,9 +314,8 @@ static pair<size_t, size_t> propagate(const uint8_t *msg_diff, const size_t n, c
                         break;
                     }
 
-                case 3:
+                case 3: // W[t>=8] = sigma0(W[t-3]) + W[t-4]
                     {
-                        // t >= 8: W[t] = sigma0(W[t-3]) + W[t-4]
                         PROP_START(propagate_add(propagate_sigma0(state.sched[t-3]), state.sched[t-4], pthresh));
                         PROP_INTROS;
                         state.sched[t] = diff;
@@ -331,9 +324,8 @@ static pair<size_t, size_t> propagate(const uint8_t *msg_diff, const size_t n, c
                         break;
                     }
 
-                case 4:
+                case 4: // W[t>=8] = sigma1(W[t-8]) + W[t]
                     {
-                        // t >= 8: W[t] = sigma1(W[t-8]) + W[t]
                         PROP_START(propagate_add(propagate_sigma1(state.sched[t-8]), state.sched[t], pthresh));
                         PROP_INTROS;
                         state.sched[t] = diff;
@@ -342,9 +334,8 @@ static pair<size_t, size_t> propagate(const uint8_t *msg_diff, const size_t n, c
                         break;
                     }
 
-                case 5:
+                case 5: // t1 = t1 + W[t]
                     {
-                        // t1 = t1 + W[t]
                         PROP_START(propagate_add(state.t1, state.sched[t], pthresh));
                         PROP_INTROS;
                         state.t1    = diff;
@@ -352,16 +343,14 @@ static pair<size_t, size_t> propagate(const uint8_t *msg_diff, const size_t n, c
                         PROP_END;
                         break;
                     }
-                case 6:
+                case 6: // t2 = sigma0(a)
                     {
-                        // t2 = sigma0(a)
                         state.t2    = propagate_sigma0(state.a);
                         state.step += 1;
                         break;
                     }
-                case 7:
+                case 7: // maj = maj(a, b, c)
                     {
-                        // maj = maj(a, b, c)
                         PROP_START(propagate_maj(state.a, state.b, state.c, pthresh));
                         PROP_INTROS;
                         state.maj   = diff;
@@ -370,9 +359,8 @@ static pair<size_t, size_t> propagate(const uint8_t *msg_diff, const size_t n, c
                         break;
                     }
 
-                case 8:
+                case 8: // t2 = t2 + maj
                     {
-                        // t2 = t2 + maj
                         PROP_START(propagate_add(state.t2, state.maj, pthresh));
                         PROP_INTROS;
                         state.t2    = diff;
@@ -381,9 +369,8 @@ static pair<size_t, size_t> propagate(const uint8_t *msg_diff, const size_t n, c
                         break;
                     }
 
-                case 9:
+                case 9: // d = c; c = b + t1
                     {
-                        // d = c; c = b + t1
                         PROP_START(propagate_add(state.b, state.t1, pthresh));
                         PROP_INTROS;
                         state.d     = state.c;
@@ -393,9 +380,8 @@ static pair<size_t, size_t> propagate(const uint8_t *msg_diff, const size_t n, c
                         break;
                     }
 
-                case 10:
+                case 10: // b = a; a = t1 + t2
                     {
-                        // b = a; a = t1 + t2
                         PROP_START(propagate_add(state.t1, state.t2, pthresh));
                         PROP_INTROS;
                         state.b          = state.a;
@@ -406,10 +392,7 @@ static pair<size_t, size_t> propagate(const uint8_t *msg_diff, const size_t n, c
                         PROP_END;
                         break;
                     }
-
-                default: // Impossible
-                    break;
-
+            
                 #undef PROP_START
                 #undef PROP_INTROS
                 #undef PROP_END
