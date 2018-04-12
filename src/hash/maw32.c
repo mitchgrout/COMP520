@@ -25,7 +25,7 @@ static uint8_t *next_block(const uint8_t *ptr, size_t len)
 {
     static const uint8_t *lastptr = NULL;       // Start of the first block of the input we are chunking
     static size_t idx = 0;                      // Index of the next block
-    static uint8_t local[MAW32_DIGEST_SIZE];    // Local buffer for storing partial blocks
+    static uint8_t local[MAW32_BLOCK_SIZE];     // Local buffer for storing partial blocks
     static int needs_empty_block = 0;           // Whether or not we have a case where the final block is empty
 
     // New input
