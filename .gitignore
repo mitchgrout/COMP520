@@ -1,3 +1,14 @@
+# Specific binaries
+hash
+maw_diffs
+maw_trail
+maw_trail_gen
+
+# Lock files
+.nfs*
+.~lock*
+*.swp
+
 # Prerequisites
 *.d
 
