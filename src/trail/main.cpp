@@ -21,7 +21,7 @@ static inline uint8_t csprng_rand()
 static inline bool is_viable(uint8_t *W, const size_t rounds, const float l2pthresh,
                              size_t t, size_t ctr)
 {
-    if (t >= rounds) { printf("%zu\n", ctr); return true; }
+    if (t >= rounds) return true;
     uint8_t w0 = sigma0(W[t-3]),
             w1 = sigma1(W[t-8]);
     for (uint8_t t1: propagate_add(w0, w1, l2pthresh))
