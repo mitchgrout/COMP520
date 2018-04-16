@@ -8,6 +8,23 @@
 #include "sha2.h"
 #include "maw32.h"
 
+// Description of a hash algorithm
+struct hash_algo
+{
+    char *name;         // Name (lowercase)
+    size_t blk_size;    // Block size in bytes
+    size_t dig_size;    // Digest size in bytes
+    char *(*hash)(const uint8_t *, size_t, size_t, char *); // Pointer to the function
+};
+
+// Const array of supported hash functions
+static const struct hash_algo known_algos[] = 
+{
+    { "maw32", 8, 4, maw32_hash },
+    { "sha256", 64, 32, sha256_hash },
+};
+#define LEN(_arr) (sizeof(_arr)/sizeof((_arr)[0]))
+
 // Mutate a string in-place, making it lowercase
 inline char *to_lower_str(char *str)
 {
@@ -61,13 +78,20 @@ void show_usage()
         "  help ():\n"
         "    Show this message\n" 
         "\n"
-        "ALGO:\n"
-        "  sha256, maw32");
+        "ALGO:");
+    printf("  ");
+    for (int i = 0; i < LEN(known_algos); i++)
+    {
+        printf("%s", known_algos[i].name);
+        if (i != LEN(known_algos)-1) printf(", ");
+    }
+    putchar('\n');
 }
 
 // Simple application to run various types of hash algorithms
 int main(int argc, char **argv)
 {
+    // Used to ensure user-supplied data is valid
     #define ASSERT(expr, ...)   \
     if (!(expr))                \
     {                           \
@@ -80,32 +104,27 @@ int main(int argc, char **argv)
     ASSERT(argc >= 2);
     // Seed the PRNG
     srand(time(NULL));
-  
+
+    // Lowercase argv[1] and argv[2]
+    argv[1] = to_lower_str(argv[1]);
+    argv[2] = to_lower_str(argv[2]);
+
     // Get the option
     char *opt  = to_lower_str(argv[1]);
     // This is the only opt which does not have an algorithm specified; deal with it early
     ASSERT(strcmp(opt, "help")); 
 
-    // Get the algorithm
+    // Decide what hash function is being used
     ASSERT(argc >= 3, puts("Missing hash function"));
-    char *algo = to_lower_str(argv[2]), hashbuf[256];
-    size_t algo_blocksize, algo_digestsize;
-
-    // Decide which hash function is being used
-    char *(*hash)(const uint8_t *, size_t, size_t, char *) = NULL;
-    if (!strcmp(algo, "sha256"))
+    char hashbuf[256];
+    struct hash_algo algo = { NULL, -1, -1, NULL };
+    to_lower_str(argv[2]);
+    for (int i = 0; i < LEN(known_algos); i++) if (!strcmp(argv[2], known_algos[i].name))
     {
-        hash            = sha256_hash;
-        algo_blocksize  = 64; 
-        algo_digestsize = 32;
+        algo = known_algos[i];
+        break;
     }
-    else if (!strcmp(algo, "maw32"))
-    {
-        hash            = maw32_hash;
-        algo_blocksize  = 8;
-        algo_digestsize = 4;
-    }
-    else ASSERT(0, printf("Unknown hash function '%s'\n", algo));
+    ASSERT(algo.hash, printf("Unknown hash function '%s'\n", argv[2]));
 
     // We no longer need to access argv[0] (fname), argv[1] (opt), or argv[2] (algo)
     // Shuffle along to make later logic simpler
@@ -116,11 +135,12 @@ int main(int argc, char **argv)
     if (!strcmp(opt, "sample"))
     {
         ASSERT(argc == 3, printf("Option 'sample' requires 3 arguments, got %d\n", argc));
-        int min, max, n;
+        uint32_t min, max, n;
         ASSERT(parse_uint32(argv[0], &min), puts("Argument 'min' was not an integer"));
         ASSERT(parse_uint32(argv[1], &max), puts("Argument 'max' was not an integer"));
-        ASSERT(parse_uint32(argv[2], &n), puts("Arugment 'n' was not an integer"));
-        const int mod = 1 + max - min;
+        ASSERT(parse_uint32(argv[2], &n), puts("Argument 'n' was not an integer"));
+        ASSERT(max >= min, puts("Max must be greater than or equal to min"));
+        const uint32_t mod = 1 + max - min;
         
         // Allocate a buffer large enough for any of our strings; we will be reusing this
         uint8_t *buf = (uint8_t *) calloc(max, sizeof(uint8_t));
@@ -129,11 +149,11 @@ int main(int argc, char **argv)
         while (n-- > 0)
         {
             // Pick a length in [min, max], and populate it with random data in [0, 256]
-            int len = min + (rand() % mod);
+            uint32_t len = min + (rand() % mod);
             for (size_t idx = 0; idx < len; idx++) { buf[idx] = rand(); }
             
             // Compute and print the hash
-            printf("%s - 0x", hash(buf, len, -1, hashbuf));
+            printf("%s - 0x", algo.hash(buf, len, -1, hashbuf));
             for (size_t idx = 0; idx < len; idx++) { printf("%02x", buf[idx]); }
             printf("\n");
         }
@@ -143,7 +163,7 @@ int main(int argc, char **argv)
     else if (!strcmp(opt, "iterate"))
     {
         ASSERT(argc == 1, printf("Option 'iterate' requires 1 argument, got %d\n", argc));
-        int n;
+        uint32_t n;
         ASSERT(parse_uint32(argv[0], &n), puts("Argument 'n' was not an integer"));
         // Allocate a buffer large enough to store any of our strings; we will be reusing this
         uint8_t *buf = (uint8_t *) calloc(n, sizeof(uint8_t)); 
@@ -154,7 +174,7 @@ int main(int argc, char **argv)
         while (1)
         {
             // Hash whatever is in buf
-            printf("%s - 0x", hash(buf, n, -1, hashbuf));
+            printf("%s - 0x", algo.hash(buf, n, -1, hashbuf));
             for (size_t idx = 0; idx < n; idx++) { printf("%02x", buf[idx]); }
             printf("\n");
 
@@ -184,11 +204,10 @@ int main(int argc, char **argv)
     }
     else if (!strcmp(opt, "test"))
     {
-        j
         for (size_t idx = 0; idx < argc; idx++)
         {
             char *s = argv[idx];
-            printf("%s - \"%s\"\n", hash(s, strlen(s), -1, hashbuf), s);
+            printf("%s - \"%s\"\n", algo.hash(s, strlen(s), -1, hashbuf), s);
         }
         return 0;
     }
@@ -198,30 +217,28 @@ int main(int argc, char **argv)
         int rounds;
         ASSERT(parse_uint32(argv[0], &rounds), puts("Argument 'rounds' was not an integer"));
         // No need to free these; program will only be terminated with ^C.
-        uint8_t *diff    = malloc(algo_blocksize),
-                *input1  = malloc(algo_blocksize),
-                *input2  = malloc(algo_blocksize),
-                *digest1 = malloc(2*algo_digestsize+1),
-                *digest2 = malloc(2*algo_digestsize+1);
-        for (int i = 0; i < algo_blocksize; i++)
-        {
+        uint8_t *diff    = malloc(algo.blk_size),
+                *input1  = malloc(algo.blk_size),
+                *input2  = malloc(algo.blk_size),
+                *digest1 = malloc(2*algo.dig_size+1),
+                *digest2 = malloc(2*algo.dig_size+1);
+        for (int i = 0; i < algo.blk_size; i++)
             ASSERT(parse_uint8(argv[1] + 2*(i+1), diff+i), printf("Could not parse hex byte at index %d\n", i));
-        }
 
         while (1)
         {
             // Produce two inputs with a difference of diff
-            for (int i = 0; i < algo_blocksize; i++) input2[i] = diff[i] ^ (input1[i] = rand());
+            for (int i = 0; i < algo.blk_size; i++) input2[i] = diff[i] ^ (input1[i] = rand());
 
             // Compute and compare their hashes
-            hash(input1, algo_blocksize, rounds, digest1);
-            hash(input2, algo_blocksize, rounds, digest2);
+            algo.hash(input1, algo.blk_size, rounds, digest1);
+            algo.hash(input2, algo.blk_size, rounds, digest2);
             // If a collision is detected, print the inputs + their colliding hash
             if (!strcmp(digest1, digest2))
             {
-                for (int i = 0; i < algo_blocksize; i++) printf("%02x", input1[i]);
+                for (int i = 0; i < algo.blk_size; i++) printf("%02x", input1[i]);
                 printf(" - ");
-                for (int i = 0; i < algo_blocksize; i++) printf("%02x", input2[i]);
+                for (int i = 0; i < algo.blk_size; i++) printf("%02x", input2[i]);
                 printf(" => %s\n", digest1);
             }
         }
