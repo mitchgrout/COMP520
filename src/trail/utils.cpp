@@ -24,5 +24,6 @@ static inline void log(FILE *stream, const char *fmt, ...)
         fputc('\n', stream);
         va_end(args);
     }
+    fflush(stream);
 }
 #endif // __UTILS
