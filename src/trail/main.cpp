@@ -60,7 +60,7 @@ static inline double get_fitness(gene_t gene)
 // Pretty-print a gene
 static inline void print_gene(gene_t gene, char *annotation)
 {
-    log(stdout, "(Fingerprint: %02x%02x%02x%02x%02x%02x%02x%02x, Fitness: %lf)%s", 
+    log(stdout, "(Fingerprint: 0x%02x%02x%02x%02x%02x%02x%02x%02x, Fitness: %lf)%s", 
             gene.diff[0], gene.diff[1], gene.diff[2], gene.diff[3],
             gene.diff[4], gene.diff[5], gene.diff[6], gene.diff[7],
             get_fitness(gene), annotation);
@@ -72,9 +72,10 @@ static size_t dice(mt19937& gen, gene_t *pool, size_t len)
     // Start by computing the total fitness
     double total_weight = 0.0f;
     for (size_t idx = 0; idx < len; idx++) total_weight += get_fitness(pool[idx]);
-    
-    // Roll a random number in [0, total_weight]
-    double result = (gen() * total_weight) / RAND_MAX;
+   
+    // Generate a number in [0, total_weight)
+    uniform_real_distribution<> dist(0.0, total_weight);
+    double result = dist(gen);
     
     // Subtract the fitness of each gene from the total weight
     // When we get <=0, select that gene
@@ -83,6 +84,8 @@ static size_t dice(mt19937& gen, gene_t *pool, size_t len)
         result -= get_fitness(pool[idx]);
         if (result <= 0) return idx;
     }
+    // This should never be hit
+    log(stdout, "ERROR: Dice returned -1!");
     return -1;
 }
 
@@ -107,7 +110,7 @@ static inline bool is_viable(uint8_t *W, const size_t rounds, const float l2pthr
 }
 
 // Check if the given array is the zero difference
-int is_trivial(uint8_t *sched)
+int is_zero_diff(uint8_t *sched)
 {
     for (int i = 0; i < 8; i++) if (sched[i]) return false;
     return true;
@@ -120,7 +123,7 @@ void make_input_diff(mt19937& gen, uint8_t *sched, size_t rounds, float l2pthres
     memset(sched, 0, 4);
     // Randomly assign differences for last four words, and check viability
     do for (int idx = 4; idx < 8; idx++) sched[idx] = gen() & 0xff;
-    while (!is_trivial(sched) && !is_viable(sched, rounds, l2pthresh, 8, 0)) ;
+    while (!is_zero_diff(sched) && !is_viable(sched, rounds, l2pthresh, 8, 0)) ;
 }
 
 // Cross over two message differences
@@ -427,7 +430,7 @@ int main(int argc, char **argv)
                             pool_copy[parent2_idx].diff, 
                             mid);
                 }
-                if (is_trivial(pool[idx].diff)) continue;
+                if (is_zero_diff(pool[idx].diff)) continue;
                 // Try to propagate it
                 std::pair<size_t, size_t> result = propagate(pool[idx].diff, rounds, pthresh);
                 if (result.first)
