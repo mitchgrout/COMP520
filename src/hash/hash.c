@@ -105,10 +105,6 @@ int main(int argc, char **argv)
     // Seed the PRNG
     srand(time(NULL));
 
-    // Lowercase argv[1] and argv[2]
-    argv[1] = to_lower_str(argv[1]);
-    argv[2] = to_lower_str(argv[2]);
-
     // Get the option
     char *opt  = to_lower_str(argv[1]);
     // This is the only opt which does not have an algorithm specified; deal with it early
@@ -116,6 +112,7 @@ int main(int argc, char **argv)
 
     // Decide what hash function is being used
     ASSERT(argc >= 3, puts("Missing hash function"));
+    to_lower_str(argv[2]);
     char hashbuf[256];
     struct hash_algo algo = { NULL, -1, -1, NULL };
     to_lower_str(argv[2]);
@@ -224,7 +221,6 @@ int main(int argc, char **argv)
                 *digest2 = malloc(2*algo.dig_size+1);
         for (int i = 0; i < algo.blk_size; i++)
             ASSERT(parse_uint8(argv[1] + 2*(i+1), diff+i), printf("Could not parse hex byte at index %d\n", i));
-
         while (1)
         {
             // Produce two inputs with a difference of diff
@@ -240,6 +236,7 @@ int main(int argc, char **argv)
                 printf(" - ");
                 for (int i = 0; i < algo.blk_size; i++) printf("%02x", input2[i]);
                 printf(" => %s\n", digest1);
+                fflush(stdout);
             }
         }
     }

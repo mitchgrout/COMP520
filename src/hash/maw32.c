@@ -6,8 +6,6 @@
 #include <stdlib.h>
 #include "util.h"
 
-#define LOG
-
 // Utilities for MAW32
 #define MAW32_BLOCK_SIZE  8 // 64 bits => 8 bytes for every block
 #define MAW32_DIGEST_SIZE 4 // 32 bits => 4 bytes for the digest
