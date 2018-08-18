@@ -5,12 +5,28 @@
 
 #include <stdlib.h>
 #include <stdint.h>
+#include <unistd.h>
+#include <semaphore.h>
+
 #include "utils.cpp"
 #include "maw32_utils.cpp"
 #include "maw32_trail.cpp"
+
+#include <queue>
 #include <vector>
 #include <tuple>
+#include <thread>
+#include <random>
 using namespace std;
+
+// Running configuration
+typedef struct
+{
+    float pthresh;
+    size_t rounds;
+    size_t nthreads;
+    uint32_t seed;
+} conf_t;
 
 // A representation of a gene for our genetic algorithm
 typedef struct
@@ -42,23 +58,23 @@ static inline double get_fitness(gene_t gene)
 }
 
 // Pretty-print a gene
-static inline void print_gene(gene_t gene)
+static inline void print_gene(gene_t gene, char *annotation)
 {
-    log(stdout, "(Fingerprint: %02x%02x%02x%02x%02x%02x%02x%02x, Fitness: %lf)", 
+    log(stdout, "(Fingerprint: %02x%02x%02x%02x%02x%02x%02x%02x, Fitness: %lf)%s", 
             gene.diff[0], gene.diff[1], gene.diff[2], gene.diff[3],
             gene.diff[4], gene.diff[5], gene.diff[6], gene.diff[7],
-            get_fitness(gene));
+            get_fitness(gene), annotation);
 }
 
 // Choose a random gene from the pool, weighted by their fitness
-static size_t dice(gene_t *pool, size_t len)
+static size_t dice(mt19937 gen, gene_t *pool, size_t len)
 {
     // Start by computing the total fitness
     double total_weight = 0.0f;
     for (size_t idx = 0; idx < len; idx++) total_weight += get_fitness(pool[idx]);
     
     // Roll a random number in [0, total_weight]
-    double result = (rand() * total_weight) / RAND_MAX;
+    double result = (gen() * total_weight) / RAND_MAX;
     
     // Subtract the fitness of each gene from the total weight
     // When we get <=0, select that gene
@@ -68,16 +84,6 @@ static size_t dice(gene_t *pool, size_t len)
         if (result <= 0) return idx;
     }
     return -1;
-}
-
-// Compute a 32-bit true-random number
-static inline uint32_t csprng_rand32()
-{
-    static FILE *handle = fopen("/dev/urandom", "r");
-    return (getc(handle) << 24) |
-           (getc(handle) << 16) |
-           (getc(handle) <<  8) |
-           (getc(handle) <<  0) ;
 }
 
 // min(a,b)
@@ -101,12 +107,12 @@ static inline bool is_viable(uint8_t *W, const size_t rounds, const float l2pthr
 }
 
 // Create an input differential randomly.
-void make_input_diff(uint8_t *sched, size_t rounds, float l2pthresh)
+void make_input_diff(mt19937 gen, uint8_t *sched, size_t rounds, float l2pthresh)
 {
     // Zero out the first 4 words
     memset(sched, 0, 4);
     // Randomly assign differences for last four words, and check viability
-    do for (int idx = 4; idx < 8; idx++) sched[idx] = rand() & 0xff;
+    do for (int idx = 4; idx < 8; idx++) sched[idx] = gen() & 0xff;
     while (!is_viable(sched, rounds, l2pthresh, 8, 0)) ;
 }
 
@@ -140,18 +146,154 @@ void cross(uint8_t *dest, const uint8_t *left, const uint8_t *right, const size_
     }
 }
 
+// Lock for the following queue
+pthread_mutex_t queue_lock = PTHREAD_MUTEX_INITIALIZER;
+// Queue for storing genes created by slave_make_trails
+queue<gene_t> slave_pool;
+// Semaphore used to notify get_next_gene when it can run
+// The value represents how many values are available in the queue
+sem_t queue_notif;
+
+// Push a gene to the slave pool
+static inline void put_next_gene(gene_t gene)
+{
+    pthread_mutex_lock(&queue_lock);
+    slave_pool.push(gene);
+    sem_post(&queue_notif);
+    pthread_mutex_unlock(&queue_lock);
+}
+
+// Fetch the next gene from slave_pool
+static inline gene_t get_next_gene()
+{
+    while (1)
+    {
+        sem_wait(&queue_notif);
+        pthread_mutex_lock(&queue_lock);
+        gene_t result = slave_pool.front();
+        slave_pool.pop();
+        pthread_mutex_unlock(&queue_lock);
+        return result;
+    }
+}
+
+// Used as a worker thread to generate potential trails
+void *slave_make_trails(void *arg)
+{
+    conf_t config = *(conf_t *) arg;
+    mt19937 gen(config.seed);
+    while (1)
+    {
+        gene_t gene;
+        // Build a differential, print it out
+        make_input_diff(gen, gene.diff, config.rounds, config.pthresh);
+        std::pair<size_t, size_t> result = propagate(gene.diff, config.rounds, config.pthresh);
+        if (result.first)
+        {
+            gene.zero_trails  = result.first;
+            gene.total_trails = result.second;
+            put_next_gene(gene);
+       }
+    }
+    pthread_exit(NULL);
+}
+
+void show_usage()
+{
+    puts(
+        "USAGE: maw_trail [...]\n"
+        "\n"
+        "Arguments:\n"
+        "  -d           Dry run. Runs all setup but does not\n"
+        "               generate any trails.\n"
+        "  -n count     Specify the number of threads to use.\n"
+        "               Defaults to half of the threads on the CPU.\n"
+        "  -p prob      Specify the threshhold probability as a\n"
+        "               log2 value. Defaults to -3.000000.\n"
+        "  -r rounds    Specify the number of rounds to propagate.\n"
+        "               Defaults to 8.\n"
+        "  -s size      Specify the gene pool size.\n"
+        "               Defaults to 32.");
+}
+
+/*int succ(uint8_t *data, size_t len)
+{
+    if (!len)           return 0;
+    if (!++data[len-1]) return succ(data, len-1);
+                        return 1;
+}*/
+
 // Entry point
 int main(int argc, char **argv)
 {
-    // Runtime consts
-    const float pthresh = -3.000000f;
-    const size_t rounds = 8;
-    const char *key_fname = "/Scratch/key-file-3.000000.bin",
-               *add_fname = "/Scratch/add-file-3.000000.bin",
-               *maj_fname = "/Scratch/maj-file-3.000000.bin";
+    // Used to ensure user-supplied data is valid
+    #define ASSERT(expr, ...)   \
+    if (!(expr))                \
+    {                           \
+        __VA_ARGS__;            \
+        show_usage();           \
+        return 1;               \
+    }
+
+    // Default args
+    bool dry_run     = false;
+    size_t nthreads  = (size_t) ceil(sysconf(_SC_NPROCESSORS_CONF) / 2.0f);
+    float pthresh    = -3.000000f;
+    size_t rounds    = 8;
+    size_t pool_size = 32;
+    float immigration_rate = 0.05;
+    char key_fname[] = "/Scratch/key-file-*.******.bin",
+         add_fname[] = "/Scratch/add-file-*.******.bin",
+         maj_fname[] = "/Scratch/maj-file-*.******.bin";
+
+    // Read args
+    int option = -1;
+    while ((option = getopt(argc, argv, "hdn:p:r:s:")) != -1) switch (option)
+    {
+        case 'd':
+            dry_run = true;
+            break;
+
+        case 'n':
+            nthreads = (unsigned) atoll(optarg);
+            ASSERT(nthreads, log(stdout, "Error: Cannot use zero threads"));
+            if (nthreads >= sysconf(_SC_NPROCESSORS_CONF))
+            {
+                log(stdout, "Warning: Requesting to use more threads than available on CPU");
+            }
+            break;
+
+        case 'p': 
+            pthresh = atof(optarg);
+            ASSERT(pthresh < 0, log(stdout, "Error: Cannot have a positive threshhhold probability"));
+            break;
+
+        case 'r':
+            rounds = (unsigned) atoll(optarg);
+            ASSERT(rounds >= 1 && rounds <= 16, log(stdout, "Error: Rounds must be between 1 and 16"));
+            break;
+
+        case 's':
+            pool_size = (unsigned) atoll(optarg);
+            ASSERT(pool_size >= 16, log(stdout, "Pool size must be greater than or equal to 16"));
+            break;
+
+        default:
+            ASSERT(0);
+    }
+
+    // Alter *_fname appropriately, by setting *.****** to pthresh
+    sprintf(key_fname+17, "%f.bin", pthresh);
+    sprintf(add_fname+17, "%f.bin", pthresh);
+    sprintf(maj_fname+17, "%f.bin", pthresh);
 
     // Setup
     log(stdout, "Initializing...");
+    log(stdout, "Threads: %zu", nthreads);
+    log(stdout, "Rounds: %zu/16", rounds);
+    log(stdout, "Threshold probability: 2^%f", pthresh);
+    log(stdout, "Pool size: %zu", pool_size);
+    log(stdout, "Immigration rate: %f\n", immigration_rate);
     if (load_key_memo(key_fname)) log(stdout, "Loaded key memos from %s", key_fname);
     else log(stdout, "Failed to load key memos from %s", key_fname);
     if (load_add_memo(add_fname)) log(stdout, "Loaded add memos from %s", add_fname);
@@ -159,83 +301,112 @@ int main(int argc, char **argv)
     if (load_maj_memo(maj_fname)) log(stdout, "Loaded maj memos from %s", maj_fname);
     else log(stdout, "Failed to load maj memos from %s", maj_fname);
     log(stdout, "Done!\n");
-    log(stdout, "Rounds: %zu/16", rounds);
-    log(stdout, "Threshold probability: 2^%f\n", pthresh);
- 
-    // Reseed PRNG
-    srand(csprng_rand32());
+    if (dry_run) return 0;
+
+    // Set up RNGs
+    random_device devrand;
+    mt19937 gen(devrand());
+
+    // Set up semaphores
+    sem_init(&queue_notif, 0, 0);
+
+    // Spawn nthread many workers
+    thread *tids = (thread *) calloc(nthreads, sizeof(thread));
+    conf_t *configs = (conf_t *) calloc(nthreads, sizeof(thread));
+    for (size_t idx = 0; idx < nthreads; idx++)
+    {
+        configs[idx].pthresh  = pthresh;
+        configs[idx].rounds   = rounds;
+        configs[idx].nthreads = nthreads;
+        configs[idx].seed     = devrand();
+        tids[idx] = thread(slave_make_trails, configs+idx); 
+    }
+
 
     // Gather enough differentials to use for genetic algorithms
     // Does not have to be on the stack hence static
-    #define POOL_SIZE 32
-    static gene_t pool[POOL_SIZE];
-    for (int idx = 0; idx < POOL_SIZE; )
+    gene_t *pool      = (gene_t *) calloc(pool_size, sizeof(gene_t)),
+           *pool_copy = (gene_t *) calloc(pool_size, sizeof(gene_t));
+    // Wait for slaves to produce results
+    for (;;) // for (int idx = 0; idx < pool_size; idx++)
     {
-        // Build a differential, print it out
-        make_input_diff(pool[idx].diff, rounds, pthresh);
-        std::pair<size_t, size_t> result = propagate(pool[idx].diff, rounds, pthresh);
-        if (result.first)
-        {
-            pool[idx].zero_trails  = result.first;
-            pool[idx].total_trails = result.second;
-            print_gene(pool[idx]);
-            idx++;
-        }
+        // Blocking operation
+        // pool[idx] = get_next_gene();
+        // print_gene(pool[idx], " - Immigration");
+        print_gene(get_next_gene(), " - Immigration");
     }
-    log(stdout, "");
+   
+    log(stdout, "Beginning optimization");
 
     // We now have a full gene pool, begin breeding
     for (size_t pool_num = 1; ; pool_num++)
     {
+        // Reseed PRNG
+
         // Create a copy; we will destroy this to rebuild the real pool
-        static gene_t pool_copy[POOL_SIZE];
-        memset(pool_copy, 0, sizeof(pool_copy));
+        memset(pool_copy, 0, pool_size * sizeof(gene_t));
 
         // Allow half the pool to live; this is done by using `dice` to
         // statistically pick the best solutions
         size_t idx = 0;
-        for ( ; idx < POOL_SIZE/2; )
+        for ( ; idx < pool_size/2; )
         {
             // Pick an index of a living gene
-            size_t survivor_idx = dice(pool, POOL_SIZE);
+            size_t survivor_idx = dice(gen, pool, pool_size);
             // Copy it to the pool
             pool_copy[idx++] = pool[survivor_idx];
             // and remove the gene from the original pool
             kill_gene(&pool[survivor_idx]);
         }
         // Copy the survivors into the real pool
-        memcpy(pool, pool_copy, sizeof(pool_copy));
-        // and begin breeding new genes
-        for ( ; idx < POOL_SIZE; idx++)
+        memcpy(pool, pool_copy, pool_size * sizeof(gene_t));
+        // add immigrants
+        for ( ; idx < (int)ceil((pool_size/2) * (1.0+immigration_rate)); idx++)
         {
+            pool[idx] = get_next_gene();
+            print_gene(pool[idx], " - Immigration");
+        }
+        // and begin breeding new genes
+        for ( ; idx < pool_size; idx++)
+        {
+            // Roll a number in [0,16)
+            int result = gen() & 0xf;
+            // 1/16 to introduce immigrate a gene in
+            if (0 && rand == 0) 
+            {
+                // Blocking operation
+                pool[idx] = get_next_gene();
+                print_gene(pool[idx], " - Immigration");
+            }
             // Note that we have this loop to prevent getting stuck with 'bad'
             // choices for parent genes
-            while (1)
+            else while (1)
             {
                 // 1/4 to mutate
-                if (!(rand() % 4))
+                if (result < 4)
                 {
                     // Pick a random gene from our survivors
-                    size_t parent_idx = dice(pool, POOL_SIZE/2);
+                    size_t parent_idx = dice(gen, pool, pool_size/2);
                     // Copy the diff into new_gene
                     memcpy(pool[idx].diff, pool_copy[parent_idx].diff, 8*sizeof(uint8_t));
                     // Flip a random bit in the dense section
-                    int bit_idx = 32 + (rand() % 32);
+                    int bit_idx = 32 + (gen() % 32);
                     pool[idx].diff[bit_idx/8] ^= 1 << (8 - (bit_idx % 8));
                 }
+                // Rest is crossing over
                 else
                 {
                     // Pick two random disinct genes
-                    size_t parent1_idx = dice(pool, POOL_SIZE/2);
+                    size_t parent1_idx = dice(gen, pool, pool_size/2);
                     size_t parent2_idx;
-                    do parent2_idx = dice(pool,POOL_SIZE/2); while(parent1_idx == parent2_idx);
+                    do parent2_idx = dice(gen, pool,pool_size/2); while(parent1_idx == parent2_idx);
                     // Pick a midpoint
-                    int mid = 32 + (rand() % 32);
+                    int mid = 32 + (gen() % 32);
                     // and cross
                     cross(pool[idx].diff, 
-                          pool_copy[parent1_idx].diff,
-                          pool_copy[parent2_idx].diff, 
-                          mid);
+                            pool_copy[parent1_idx].diff,
+                            pool_copy[parent2_idx].diff, 
+                            mid);
                 }
                 // Try to propagate it
                 std::pair<size_t, size_t> result = propagate(pool[idx].diff, rounds, pthresh);
@@ -243,6 +414,7 @@ int main(int argc, char **argv)
                 {
                     pool[idx].zero_trails  = result.first;
                     pool[idx].total_trails = result.second;
+                    print_gene(pool[idx], " - Generated");
                     break;
                 }
                 // otherwise continue
@@ -250,15 +422,17 @@ int main(int argc, char **argv)
         }
         // Everything has been repopulated.
         log(stdout, "Population %zu bred.", pool_num);
+        /*
         gene_t *best = &pool[0];
-        for (int i = 0; i < POOL_SIZE; i++)
+        for (int i = 0; i < pool_size; i++)
         {
-            print_gene(pool[i]);
+            // print_gene(pool[i]);
             if (get_fitness(pool[i]) > get_fitness(*best)) best = &pool[i];
         }
         log(stdout, "Current best:");
         print_gene(*best);
-        log(stdout, "");
+        */
+        // log(stdout, "");
     }
     return 0;
 }
