@@ -106,6 +106,13 @@ static inline bool is_viable(uint8_t *W, const size_t rounds, const float l2pthr
     return false;
 }
 
+// Check if the given array is the zero difference
+int is_trivial(uint8_t *sched)
+{
+    for (int i = 0; i < 8; i++) if (sched[i]) return false;
+    return true;
+}
+
 // Create an input differential randomly.
 void make_input_diff(mt19937& gen, uint8_t *sched, size_t rounds, float l2pthresh)
 {
@@ -113,7 +120,7 @@ void make_input_diff(mt19937& gen, uint8_t *sched, size_t rounds, float l2pthres
     memset(sched, 0, 4);
     // Randomly assign differences for last four words, and check viability
     do for (int idx = 4; idx < 8; idx++) sched[idx] = gen() & 0xff;
-    while (!is_viable(sched, rounds, l2pthresh, 8, 0)) ;
+    while (!is_trivial(sched) && !is_viable(sched, rounds, l2pthresh, 8, 0)) ;
 }
 
 // Cross over two message differences
@@ -420,6 +427,7 @@ int main(int argc, char **argv)
                             pool_copy[parent2_idx].diff, 
                             mid);
                 }
+                if (is_trivial(pool[idx].diff)) continue;
                 // Try to propagate it
                 std::pair<size_t, size_t> result = propagate(pool[idx].diff, rounds, pthresh);
                 if (result.first)
@@ -441,7 +449,7 @@ int main(int argc, char **argv)
  
         // Everything has been repopulated.
         log(stdout, "Population %zu bred.", pool_num);
-   }
+    }
     return 0;
 }
 #endif // __MAIN
