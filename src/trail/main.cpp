@@ -67,7 +67,7 @@ static inline void print_gene(gene_t gene, char *annotation)
 }
 
 // Choose a random gene from the pool, weighted by their fitness
-static size_t dice(mt19937 gen, gene_t *pool, size_t len)
+static size_t dice(mt19937& gen, gene_t *pool, size_t len)
 {
     // Start by computing the total fitness
     double total_weight = 0.0f;
@@ -107,7 +107,7 @@ static inline bool is_viable(uint8_t *W, const size_t rounds, const float l2pthr
 }
 
 // Create an input differential randomly.
-void make_input_diff(mt19937 gen, uint8_t *sched, size_t rounds, float l2pthresh)
+void make_input_diff(mt19937& gen, uint8_t *sched, size_t rounds, float l2pthresh)
 {
     // Zero out the first 4 words
     memset(sched, 0, 4);
@@ -312,7 +312,7 @@ int main(int argc, char **argv)
 
     // Spawn nthread many workers
     thread *tids = (thread *) calloc(nthreads, sizeof(thread));
-    conf_t *configs = (conf_t *) calloc(nthreads, sizeof(thread));
+    conf_t *configs = (conf_t *) calloc(nthreads, sizeof(conf_t));
     for (size_t idx = 0; idx < nthreads; idx++)
     {
         configs[idx].pthresh  = pthresh;
@@ -322,18 +322,16 @@ int main(int argc, char **argv)
         tids[idx] = thread(slave_make_trails, configs+idx); 
     }
 
-
     // Gather enough differentials to use for genetic algorithms
     // Does not have to be on the stack hence static
     gene_t *pool      = (gene_t *) calloc(pool_size, sizeof(gene_t)),
            *pool_copy = (gene_t *) calloc(pool_size, sizeof(gene_t));
     // Wait for slaves to produce results
-    for (;;) // for (int idx = 0; idx < pool_size; idx++)
+    for (int idx = 0; idx < pool_size; idx++)
     {
         // Blocking operation
-        // pool[idx] = get_next_gene();
-        // print_gene(pool[idx], " - Immigration");
-        print_gene(get_next_gene(), " - Immigration");
+        pool[idx] = get_next_gene();
+        print_gene(pool[idx], " - Immigration");
     }
    
     log(stdout, "Beginning optimization");
@@ -355,6 +353,7 @@ int main(int argc, char **argv)
             size_t survivor_idx = dice(gen, pool, pool_size);
             // Copy it to the pool
             pool_copy[idx++] = pool[survivor_idx];
+            print_gene(pool[survivor_idx], " - Survivor");
             // and remove the gene from the original pool
             kill_gene(&pool[survivor_idx]);
         }
@@ -420,20 +419,16 @@ int main(int argc, char **argv)
                 // otherwise continue
             }
         }
-        // Everything has been repopulated.
-        log(stdout, "Population %zu bred.", pool_num);
-        /*
         gene_t *best = &pool[0];
-        for (int i = 0; i < pool_size; i++)
+        for (int i = 1; i < pool_size; i++)
         {
-            // print_gene(pool[i]);
             if (get_fitness(pool[i]) > get_fitness(*best)) best = &pool[i];
         }
-        log(stdout, "Current best:");
-        print_gene(*best);
-        */
-        // log(stdout, "");
-    }
+        print_gene(*best, " - Best");
+ 
+        // Everything has been repopulated.
+        log(stdout, "Population %zu bred.", pool_num);
+   }
     return 0;
 }
 #endif // __MAIN
