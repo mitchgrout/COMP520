@@ -206,6 +206,8 @@ void show_usage()
         "Arguments:\n"
         "  -d           Dry run. Runs all setup but does not\n"
         "               generate any trails.\n"
+        "  -i           Random only. Does not apply the\n"
+        "               genetic algorithm to generate results."
         "  -n count     Specify the number of threads to use.\n"
         "               Defaults to half of the threads on the CPU.\n"
         "  -p prob      Specify the threshhold probability as a\n"
@@ -213,15 +215,10 @@ void show_usage()
         "  -r rounds    Specify the number of rounds to propagate.\n"
         "               Defaults to 8.\n"
         "  -s size      Specify the gene pool size.\n"
-        "               Defaults to 32.");
+        "               Defaults to 32.\n"
+        "  -m rate      Specify the immigration rate.\n"
+        "               Defaults to 0.05 (5%)");
 }
-
-/*int succ(uint8_t *data, size_t len)
-{
-    if (!len)           return 0;
-    if (!++data[len-1]) return succ(data, len-1);
-                        return 1;
-}*/
 
 // Entry point
 int main(int argc, char **argv)
@@ -237,6 +234,7 @@ int main(int argc, char **argv)
 
     // Default args
     bool dry_run     = false;
+    bool random_only = false;
     size_t nthreads  = (size_t) ceil(sysconf(_SC_NPROCESSORS_CONF) / 2.0f);
     float pthresh    = -3.000000f;
     size_t rounds    = 8;
@@ -248,10 +246,14 @@ int main(int argc, char **argv)
 
     // Read args
     int option = -1;
-    while ((option = getopt(argc, argv, "hdn:p:r:s:")) != -1) switch (option)
+    while ((option = getopt(argc, argv, "hidn:p:r:s:m:")) != -1) switch (option)
     {
         case 'd':
             dry_run = true;
+            break;
+
+        case 'i':
+            random_only = true;;
             break;
 
         case 'n':
@@ -275,7 +277,13 @@ int main(int argc, char **argv)
 
         case 's':
             pool_size = (unsigned) atoll(optarg);
-            ASSERT(pool_size >= 16, log(stdout, "Pool size must be greater than or equal to 16"));
+            ASSERT(pool_size >= 16, log(stdout, "Error: Pool size must be greater than or equal to 16"));
+            break;
+    
+        case 'm':
+            immigration_rate = atof(optarg);
+            ASSERT(0.0 <= immigration_rate, log(stdout, "Error: Immigration rate must be >= 0"));
+            ASSERT(immigration_rate <= 0.5, log(stdout, "Error: Immigration rate must be <= 0.5"));
             break;
 
         default:
@@ -292,8 +300,11 @@ int main(int argc, char **argv)
     log(stdout, "Threads: %zu", nthreads);
     log(stdout, "Rounds: %zu/16", rounds);
     log(stdout, "Threshold probability: 2^%f", pthresh);
+    log(stdout, "Random only: %s", random_only? "true" : "false");
     log(stdout, "Pool size: %zu", pool_size);
     log(stdout, "Immigration rate: %f\n", immigration_rate);
+    
+    // Load memos
     if (load_key_memo(key_fname)) log(stdout, "Loaded key memos from %s", key_fname);
     else log(stdout, "Failed to load key memos from %s", key_fname);
     if (load_add_memo(add_fname)) log(stdout, "Loaded add memos from %s", add_fname);
@@ -322,16 +333,20 @@ int main(int argc, char **argv)
         tids[idx] = thread(slave_make_trails, configs+idx); 
     }
 
+    // If we're only after random data
+    if (random_only) while (1)
+    {
+        print_gene(get_next_gene(), (char *)" - Immigration");
+    }
+
     // Gather enough differentials to use for genetic algorithms
     // Does not have to be on the stack hence static
     gene_t *pool      = (gene_t *) calloc(pool_size, sizeof(gene_t)),
            *pool_copy = (gene_t *) calloc(pool_size, sizeof(gene_t));
-    // Wait for slaves to produce results
     for (int idx = 0; idx < pool_size; idx++)
     {
-        // Blocking operation
         pool[idx] = get_next_gene();
-        print_gene(pool[idx], " - Immigration");
+        print_gene(pool[idx], (char *)" - Immigration");
     }
    
     log(stdout, "Beginning optimization");
@@ -339,8 +354,6 @@ int main(int argc, char **argv)
     // We now have a full gene pool, begin breeding
     for (size_t pool_num = 1; ; pool_num++)
     {
-        // Reseed PRNG
-
         // Create a copy; we will destroy this to rebuild the real pool
         memset(pool_copy, 0, pool_size * sizeof(gene_t));
 
@@ -353,7 +366,7 @@ int main(int argc, char **argv)
             size_t survivor_idx = dice(gen, pool, pool_size);
             // Copy it to the pool
             pool_copy[idx++] = pool[survivor_idx];
-            print_gene(pool[survivor_idx], " - Survivor");
+            print_gene(pool[survivor_idx], (char *)" - Survivor");
             // and remove the gene from the original pool
             kill_gene(&pool[survivor_idx]);
         }
@@ -363,7 +376,7 @@ int main(int argc, char **argv)
         for ( ; idx < (int)ceil((pool_size/2) * (1.0+immigration_rate)); idx++)
         {
             pool[idx] = get_next_gene();
-            print_gene(pool[idx], " - Immigration");
+            print_gene(pool[idx], (char *)" - Immigration");
         }
         // and begin breeding new genes
         for ( ; idx < pool_size; idx++)
@@ -375,7 +388,7 @@ int main(int argc, char **argv)
             {
                 // Blocking operation
                 pool[idx] = get_next_gene();
-                print_gene(pool[idx], " - Immigration");
+                print_gene(pool[idx], (char *)" - Immigration");
             }
             // Note that we have this loop to prevent getting stuck with 'bad'
             // choices for parent genes
@@ -413,7 +426,7 @@ int main(int argc, char **argv)
                 {
                     pool[idx].zero_trails  = result.first;
                     pool[idx].total_trails = result.second;
-                    print_gene(pool[idx], " - Generated");
+                    print_gene(pool[idx], (char *)" - Generated");
                     break;
                 }
                 // otherwise continue
@@ -424,7 +437,7 @@ int main(int argc, char **argv)
         {
             if (get_fitness(pool[i]) > get_fitness(*best)) best = &pool[i];
         }
-        print_gene(*best, " - Best");
+        print_gene(*best, (char *)" - Best");
  
         // Everything has been repopulated.
         log(stdout, "Population %zu bred.", pool_num);
