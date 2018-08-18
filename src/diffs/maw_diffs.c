@@ -60,7 +60,7 @@ int main(int argc, char **argv)
     char *func = tolowerstr(argv[1]);
     if (!strcmp(func, "sigma0"))
     {
-        puts("Differentials for sigma0:");
+        puts("Differences for sigma0:");
         int d_m;
         sscanf(argv[2], "0x%02x", &d_m);
         int counts[256];
@@ -77,7 +77,7 @@ int main(int argc, char **argv)
     }
     else if (!strcmp(func, "sigma1"))
     {
-        puts("Differentials for sigma1:");
+        puts("Differences for sigma1:");
         int d_m;
         sscanf(argv[2], "0x%02x", &d_m);
         int counts[256];
@@ -88,7 +88,7 @@ int main(int argc, char **argv)
         }
         for (int d_h = 0; d_h < 256; d_h++) if (counts[d_h])
         {
-            printf("0x%02x => 0x%02x : %d/256\n", d_m, d_h, counts[d_h]);
+            printf("0x%02x : %d/256\n", d_m, d_h, counts[d_h]);
         }
         return 0;
     }
@@ -96,7 +96,7 @@ int main(int argc, char **argv)
     {
         int k;
         sscanf(argv[2], "%d", &k);
-        printf("Differentils for keymix-%d:\n", k);
+        printf("Differences for keymix-%d:\n", k);
         int d_m;
         sscanf(argv[3], "0x%02x", &d_m);
         int counts[256];
@@ -107,13 +107,13 @@ int main(int argc, char **argv)
         }
         for (int d_h = 0; d_h < 256; d_h++) if (counts[d_h])
         {
-            printf("0x%02x => 0x%02x : %d/256\n", d_m, d_h, counts[d_h]);
+            printf("0x%02x : %d/256\n", d_m, d_h, counts[d_h]);
         }
         return 0;
     }
     else if (!strcmp(func, "maj"))
     {
-        puts("Differentials for maj:");
+        puts("Differences for maj:");
         int d_x, d_y, d_z;
         sscanf(argv[2], "0x%02x", &d_x);
         sscanf(argv[3], "0x%02x", &d_y);
@@ -128,13 +128,13 @@ int main(int argc, char **argv)
         }
         for (int d_h = 0; d_h < 256; d_h++) if (counts[d_h])
         {
-            printf("(0x%02x,0x%02x,0x%02x) => 0x%02x : %d/16777216\n", d_x, d_y, d_z, d_h, counts[d_h]);
+            printf("0x%02x : %d/16777216\n", d_x, d_y, d_z, d_h, counts[d_h]);
         }
         return 0;
     }
     else if (!strcmp(func, "add"))
     {
-        puts("Differentials for +:");
+        puts("Differences for +:");
         int d_x, d_y;
         sscanf(argv[2], "0x%02x", &d_x);
         sscanf(argv[3], "0x%02x", &d_y);
@@ -147,7 +147,7 @@ int main(int argc, char **argv)
         }
         for (int d_h = 0; d_h < 256; d_h++) if (counts[d_h])
         {
-            printf("(0x%02x,0x%02x) => 0x%02x : %d/65536\n", d_x, d_y, d_h, counts[d_h]);
+            printf("0x%02x : %d/65536\n", d_x, d_y, d_h, counts[d_h]);
         }
         return 0;
     }
