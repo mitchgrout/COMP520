@@ -1,0 +1,85 @@
+10/04/18:
+
+Tried extending to later rounds. Takes much longer than anticipated to compute
+[11:19:03] Loaded add memos from /Scratch/add-file-3.000000.bin
+[11:19:05] Loaded maj memos from /Scratch/maj-file-3.000000.bin
+[11:19:05] Done!
+
+[11:19:05] Rounds: 8/16
+[11:19:05] Threshold probability: 2^-3.000000
+
+[11:19:27] Fingerprint: 0000000038382858
+[11:19:27] Seed: 14
+[11:19:27] Trails: 2720/16241786
+
+[11:20:26] Fingerprint: 0000000038d058c0
+[11:20:26] Seed: 138
+[11:20:26] Trails: 571200/41366630
+
+[11:21:42] Fingerprint: 0000000028e84848
+[11:21:42] Seed: 156
+[11:21:42] Trails: 3168/8112864
+
+[11:22:54] Fingerprint: 0000000028709810
+[11:22:54] Seed: 25
+[11:22:54] Trails: 903316/49136557
+
+[11:23:15] Fingerprint: 00000000e41814a8
+[11:23:15] Seed: 6
+[11:23:15] Trails: 360/106067
+
+[11:23:46] Fingerprint: 000000002428d488
+[11:23:46] Seed: 159
+[11:23:46] Trails: 48/97665
+
+[11:24:22] Fingerprint: 0000000018e0d8c0
+[11:24:22] Seed: 222
+[11:24:22] Trails: 19920/7861776
+
+[11:24:29] Fingerprint: 0000000064e47c1c
+[11:24:29] Seed: 94
+[11:24:29] Trails: 18/214154
+
+[11:24:31] Fingerprint: 00000000e8b0e850
+[11:24:31] Seed: 72
+[11:24:31] Trails: 122080/7657252
+
+[11:24:56] Fingerprint: 0000000008304890
+[11:24:56] Seed: 183
+[11:24:56] Trails: 278966/22908768
+
+[12:10:12] Initializing...
+[12:10:12] Loaded key memos from /Scratch/key-file-3.000000.bin
+[12:10:12] Loaded add memos from /Scratch/add-file-3.000000.bin
+[12:10:15] Loaded maj memos from /Scratch/maj-file-3.000000.bin
+[12:10:15] Done!
+
+[12:10:15] Rounds: 8/16
+[12:10:15] Threshold probability: 2^-3.000000
+
+[12:10:20] Fingerprint: 0000000001e89e08
+[12:10:20] Seed: 1402459777
+[12:10:20] Trails: 432/90510
+
+[12:13:03] Fingerprint: 000000000ca14221
+[12:13:03] Seed: 2022856847
+[12:13:03] Trails: 3024/168652
+
+[12:13:23] Fingerprint: 00000000385088b0
+[12:13:23] Seed: 1732056866
+[12:13:23] Trails: 1116672/43572038
+
+
+mjg44@shae ~/COMP520 λ ./maw_trail
+[14:17:27] Initializing...
+[14:17:27] Loaded key memos from /Scratch/key-file-3.000000.bin
+[14:17:27] Loaded add memos from /Scratch/add-file-3.000000.bin
+[14:17:29] Loaded maj memos from /Scratch/maj-file-3.000000.bin
+[14:17:29] Done!
+
+[14:17:29] Rounds: 9/16
+[14:17:29] Threshold probability: 2^-3.000000
+
+[14:19:52] Fingerprint: 00000000646874e0
+[14:19:52] Seed: 907941809
+[14:19:52] Trails: 26496/11806121

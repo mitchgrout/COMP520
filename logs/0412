@@ -1,0 +1,69 @@
+12/04/18:
+
+POWER CUT OVERNIGHT, RUNNING COMPUTATION INTERRUPTED. RESTARTED 11/04
+
+mjg44@shae ~/COMP520 λ ./maw_trail
+[11:17:16] Initializing...
+[11:17:16] Loaded key memos from /Scratch/key-file-3.000000.bin
+[11:17:16] Loaded add memos from /Scratch/add-file-3.000000.bin
+[11:17:19] Loaded maj memos from /Scratch/maj-file-3.000000.bin
+[11:17:19] Done!
+
+[11:17:19] Rounds: 10/16
+[11:17:19] Threshold probability: 2^-3.000000
+
+
+[06:45:43] Fingerprint: 00000000649c3858
+[06:45:43] Seed: 516646386
+[06:45:43] Trails: 3454976/2275369651
+
+-- Local collision on 10 rounds (diff. 00000000649c3858)
+    776b45912f3a5ab3 - 776b45914ba662eb => b54b8737
+    73730f357e24976c - 73730f351ab8af34 => 83ac6539
+    650ad1e3ac80af70 - 650ad1e3c81c9728 => ecef71e6
+    740281e79b5fe3a4 - 740281e7ffc3dbfc => fa8b32cd
+    001340a93e1c2727 - 001340a95a801f7f => fc17144f
+
+Roughly 1min to gen. each (pure random sampling)
+
+    Very good results, however generating a good 10-round differential took
+    roughly a day and a half.
+
+    Repeating search for 12 rounds. Still not checking for good number of msg
+    expansions being zero.
+    Note that previous result DOES NOT HAVE any message expansions being zero.
+
+    Updated the hash tool to allow diff searching:
+    mjg44@shae ~/COMP520 λ ./hash diff maw32 10 0x00000000649c3858                                            
+    Diff: 00000000649c3858
+    acd5d730b2dbf182 - acd5d730d647c9da => a6d3cdb3
+    f100ada2a0ad3cf9 - f100ada2c43104a1 => b09d9759
+    aaddce972ea21b25 - aaddce974a3e237d => 0524d49d
+    dd35cfe3267907b6 - dd35cfe342e53fee => f0df9083
+    e473587dfe708052 - e473587d9aecb80a => a3056148
+    eb975f2e73e29af5 - eb975f2e177ea2ad => f91c0cb2
+    4497f69e471d01cc - 4497f69e23813994 => aa41f53e
+    09cba60167991e3c - 09cba60103052664 => 90bc46fe
+    13fdc4abcb6e7281 - 13fdc4abaff24ad9 => e369a206
+    a297ab9a8321469d - a297ab9ae7bd7ec5 => 2502791a
+    24ef83e9344fe5f4 - 24ef83e950d3ddac => 85030dd1
+    7fd1f590858f5758 - 7fd1f590e1136f00 => 2794b975
+    fa04f18846217c3a - fa04f18822bd4462 => f9c9ba2a
+    0901ff9a6c2f788b - 0901ff9a08b340d3 => 2a420f90
+    b605043fb42c1e09 - b605043fd0b02651 => cf9a00b6
+    4f16720967822bf8 - 4f167209031e13a0 => ab75b0bc
+    de700b16a8d110c1 - de700b16cc4d2899 => 31eef3ee
+    aecbbdd098ba0a47 - aecbbdd0fc26321f => d34740e9
+    ae8b3585e4aef112 - ae8b35858032c94a => 828033b2
+    7999bc25580c9fa7 - 7999bc253c90a7ff => ead64084
+    5251c2e7de44a90e - 5251c2e7bad89156 => d9c7b6fb
+    6afd781027cb4f01 - 6afd781043577759 => ce577447
+    8010d46203841857 - 8010d4626718200f => dc218e4f
+    9c319103e275054c - 9c31910386e93d14 => 4e8513b8
+    fb7f23d46355fd9c - fb7f23d407c9c5c4 => 4f2ab42a
+    087abafca56f7620 - 087abafcc1f34e78 => b587358e
+    12f3a799036dcf56 - 12f3a79967f1f70e => 77e4e5df
+    c027e404c3ede823 - c027e404a771d07b => f8b15427
+
+    TODO: Did assorted refactoring to the hash tool to make it more accessible.
+    TODO: Added more documentation for all the tools i have created

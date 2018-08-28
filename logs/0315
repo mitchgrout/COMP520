@@ -1,0 +1,26 @@
+15/03/18:
+Restart work
+Long testing
+Noticed lack of termination for long periods (sometimes 2h+ no termination)
+    Sometimes very fast (<1s)
+    Recursive defn. Hard to follow
+    Bug: m |= (diff[i] == ‘x’? 1 : 0) << i – should be << 1
+
+    Changed to iterative + stack
+    Stack is just a static state* w/ static size/len
+
+    Current pattern for holding samples is not good
+    struct diff_prob contains differential + sample count
+    but parent struct diff_vec contains the total sample count
+    Decision: Give the propagation functions a thresh. Prob and have them set
+              diff_prob with the actual differential + probability, and cull
+              anything that doesnt meet the probability
+
+
+              Tried to roll my own stack. Failed horribly. Overwrote random
+              memory
+
+              PROBLEM: THERE IS A DISCREPENCY BETWEEN STORING LOCAL VALUES FOR
+              STATE INFO + STACK INFO. PROBABLY NOT ACTUALLY CAUSING THE CURRENT
+              BUG.
+

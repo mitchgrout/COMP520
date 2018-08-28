@@ -1,0 +1,48 @@
+16/03/18:
+
+I have fixed it. I think.
+Iterative design now uses stack properly, but is giving strange differentials
+(i.e. of the form (a, a, a, a))
+
+    ~Long period without committing to this log; notes from other files~
+    17/03/18:
+    Potentially found candidate collisions for maw32
+    SEED: 1521181275
+    --------
+    --------
+    --------
+    --------
+    x-x-x-x-
+    ---x----
+    x---x---
+    xx-x-x--
+    Rounds: 8
+
+    ...
+    Differential (0x00,0x00,0x00,0x00) ~ 2^-20.000000
+    Need to audit code to determine if this is a fluke
+
+    Another?
+    SEED: 1521181774
+    --------
+    --------
+    --------
+    --------
+    x-x---x-
+    xxxx----
+    --x--x-x
+    ---x-x--
+    Rounds: 8
+
+    Sparsity (~33% chance to be diff.) in the dense section seems to be a good
+    choice
+
+    Trail #1 finds local collisions on round 8 in roughly 10 minutes on shae
+    Case:
+    0xf8 0x6c 0x53 0x57 0x88 0x67 0x52 0x19 
+    0xf8 0x6c 0x53 0x57 0x22 0x77 0xda 0xcd 
+    42c312db
+
+    do we really need STL? Could use const[]+size as a stack instead of
+    std::stack. Currently using STL for ease of impl, maybe replace with pure C
+    types later.

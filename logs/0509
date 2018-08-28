@@ -1,0 +1,16 @@
+09/05:
+
+Gave presentation to NICT etc
+Explained that genetic algorithm not feasible due to EXPSPACE tree problem
+
+Looked through code afterwards to try to print out genetic diffs as they were
+generated
+
+Actually got results?
+Noticed that in my while(1) loop I forgot to add a break; + i never printed
+genes until *all* were generated, meaning it only *seemed* that it was
+intractible. On 8 rounds, it takes ~10-20s to generate a single good delta, with
+genetic algorithms we get them in roughly a second? DOES INCLUDE DUPLICATES,
+DOES NOT PROPERLY TAKE INTO ACCOUNT THE HEURISTIC
+
+Givse a better way of generating input differences rather than guess-and-check

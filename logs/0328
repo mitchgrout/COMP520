@@ -1,0 +1,19 @@
+peed is an issue. Maj propagations take ~1s to run each, causes major slowdown.
+Now using memoization for all three (key, add, maj), precomputed everything and
+stored in /Scratch/. Maj roughly 100MB, takes ~8 hours to gen (serial,
+        non-parallel). Computed at l2prob -4.000f.
+
+Now takes ~3s to load everything, and propagations much faster.
+Default std::stack uses a deque (linked-list) as an underlying structure for
+storage. Change to stack<T, vector<T>>, 2x as fast for lookups roughly
+
+~WENT ON HOLIDAY TO GISBORNE, LITTLE WORK DONE~
+
+!!!PROBLEM!!!
+Re-read SHA-2 contra. Searching.
+States that input differentials should “have a message expansion with diff. 0
+for a large number of rounds” -- currently we are just randoming an input
+without checking anything.
+
+Add simple routine to walk through message expansion, at the moment making sure
+we can actually  reach the final round. 

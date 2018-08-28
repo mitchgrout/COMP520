@@ -1,0 +1,22 @@
+25/03/18:
+Generated memo files for f=-2,-3,-4,-5. F=-3 seems to work the best, will use
+that consistently.
+Ran check on 8 rounds, prob -3.000f. Found one good result:
+SEED: 1928513443
+--------
+--------
+--------
+--------
+---xxx--
+xxxx----
+xxx--x--
+xx-xx---
+Rounds: 8
+Threshold probability: 2^-3.000000
+==================================
+Elapsed time: 45 sec
+Zero trails: 181051/916137158
+
+Holds on 8 rounds with probability ~2^-12 (bad). All others do not have a zero
+diff.
+All other searches gave no good results.

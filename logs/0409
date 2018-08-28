@@ -1,0 +1,97 @@
+09/04/18:
+
+Refactored a large portion of codebase to make everything more reasonable.
+Output is now properly timestamped. Also added simple heuristics to trail
+propagation. Yet to implement suffiicent condition checks.
+
+Results from computations:
+mjg44@shae ~/COMP520 λ ./maw_trail
+[18:03:02] Initializing...
+[18:03:02] Loaded key memos from /Scratch/key-file-4.000000.bin
+[18:03:02] Loaded add memos from /Scratch/add-file-4.000000.bin
+[18:03:04] Loaded maj memos from /Scratch/maj-file-4.000000.bin
+[18:03:04] Done!
+
+[18:03:04] Rounds: 7/16
+[18:03:04] Threshold probability: 2^-4.000000
+
+[18:04:32] Fingerprint: 000000001100f39c
+[18:04:32] Seed: 1773740533
+[18:04:32] Trails: 400/153856
+
+[18:04:43] Fingerprint: 000000006a001789
+[18:04:43] Seed: 247390751
+[18:04:43] Trails: 270/230796
+
+[18:04:55] Fingerprint: 000000001500cc45
+[18:04:55] Seed: 1799702626
+[18:04:55] Trails: 2538/300647
+
+mjg44@shae ~/COMP520 λ ./maw_trail
+[18:06:02] Initializing...
+[18:06:02] Loaded key memos from /Scratch/key-file-4.000000.bin
+[18:06:02] Loaded add memos from /Scratch/add-file-4.000000.bin
+[18:06:04] Loaded maj memos from /Scratch/maj-file-4.000000.bin
+[18:06:04] Done!
+
+[18:06:04] Rounds: 8/16
+[18:06:04] Threshold probability: 2^-4.000000
+
+[18:18:05] Fingerprint: 00000000c312f066
+[18:18:05] Seed: 1591072261
+[18:18:05] Trails: 269888/4850441610
+
+[18:29:15] Fingerprint: 00000000340d3df9
+[18:29:15] Seed: 408369059
+[18:29:15] Trails: 1221676/20598864133
+
+[18:54:43] Fingerprint: 000000008c8e8b95
+[18:54:43] Seed: 1490713110
+[18:54:43] Trails: 1795176/50996466742
+
+--- Collision on 8 rounds (diff. 00000000340d3df9):
+    bf04a9f1def95544 - bf04a9f1eaf468bd => 91609ffa 
+
+
+    ./maw_tmjg44@shae ~/COMP520 λ ./maw_trail
+    [19:02:14] Initializing...
+    [19:02:14] Loaded key memos from /Scratch/key-file-3.000000.bin
+    [19:02:14] Loaded add memos from /Scratch/add-file-3.000000.bin
+    [19:02:17] Loaded maj memos from /Scratch/maj-file-3.000000.bin
+    [19:02:17] Done!
+
+    [19:02:17] Rounds: 8/16
+    [19:02:17] Threshold probability: 2^-3.000000
+
+    [19:03:16] Fingerprint: 00000000e4e4fc0c
+    [19:03:16] Seed: 1277353463
+    [19:03:16] Trails: 18/217808
+
+    [19:03:37] Fingerprint: 00000000e4e4fc0c
+    [19:03:37] Seed: 1277353463
+    [19:03:37] Trails: 18/217808
+
+    [19:03:58] Fingerprint: 00000000e4e4fc0c
+    [19:03:58] Seed: 1277353463
+    [19:03:58] Trails: 18/217808
+
+    [19:04:19] Fingerprint: 00000000e4e4fc0c
+    [19:04:19] Seed: 1277353463
+    [19:04:19] Trails: 18/217808
+
+    mjg44@shae ~/COMP520 λ ./maw_trail
+    [19:12:37] Initializing...
+    [19:12:37] Loaded key memos from /Scratch/key-file-3.000000.bin
+    [19:12:37] Loaded add memos from /Scratch/add-file-3.000000.bin
+    [19:12:39] Loaded maj memos from /Scratch/maj-file-3.000000.bin
+    [19:12:39] Done!
+
+    [19:12:39] Rounds: 9/16
+    [19:12:39] Threshold probability: 2^-3.000000
+
+    [19:13:15] Fingerprint: 0000000038000000
+    [19:13:15] Seed: 1124288336
+    [19:13:15] Trails: 1274464/373499634
+
+    -- Collision on 9 rounds (diff. 0000000038000000) fb8a5ee312c353cd -
+    fb8a5ee32ac353cd => 83f2b2e9
