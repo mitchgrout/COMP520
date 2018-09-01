@@ -71,7 +71,7 @@ int main(int argc, char **argv)
         }
         for (int d_h = 0; d_h < 256; d_h++) if (counts[d_h])
         {
-            printf("0x%02x => 0x%02x : %d/256\n", d_m, d_h, counts[d_h]);
+            printf("0x%02x : %d/256\n", d_h, counts[d_h]);
         }
         return 0;
     }
@@ -88,7 +88,7 @@ int main(int argc, char **argv)
         }
         for (int d_h = 0; d_h < 256; d_h++) if (counts[d_h])
         {
-            printf("0x%02x : %d/256\n", d_m, d_h, counts[d_h]);
+            printf("0x%02x : %d/256\n", d_h, counts[d_h]);
         }
         return 0;
     }
@@ -107,7 +107,7 @@ int main(int argc, char **argv)
         }
         for (int d_h = 0; d_h < 256; d_h++) if (counts[d_h])
         {
-            printf("0x%02x : %d/256\n", d_m, d_h, counts[d_h]);
+            printf("0x%02x : %d/256\n", d_h, counts[d_h]);
         }
         return 0;
     }
@@ -128,7 +128,7 @@ int main(int argc, char **argv)
         }
         for (int d_h = 0; d_h < 256; d_h++) if (counts[d_h])
         {
-            printf("0x%02x : %d/16777216\n", d_x, d_y, d_z, d_h, counts[d_h]);
+            printf("0x%02x : %d/16777216\n", d_h, counts[d_h]);
         }
         return 0;
     }
@@ -147,7 +147,7 @@ int main(int argc, char **argv)
         }
         for (int d_h = 0; d_h < 256; d_h++) if (counts[d_h])
         {
-            printf("0x%02x : %d/65536\n", d_x, d_y, d_h, counts[d_h]);
+            printf("0x%02x : %d/65536\n", d_h, counts[d_h]);
         }
         return 0;
     }

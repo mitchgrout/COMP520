@@ -34,6 +34,7 @@ typedef struct
     uint8_t diff[16];       // Input difference used
     size_t zero_trails;     // How many output differences of zero observed
     size_t total_trails;    // How many total outputs observed
+    double prob;            // Probability of a zero trail being matched
 } gene_t;
 
 // Determine if a gene is 'alive', i.e. usable for breeding
@@ -48,19 +49,21 @@ static inline void kill_gene(gene_t *gene)
     memset(gene, 0, sizeof(gene_t));
 }
 
-// Determine how fit a gene is
+// Determine how fit a gene is; this value is strictly in [0,1]
 static inline double get_fitness(gene_t gene)
 {
+    bool use_prob = true;
     // Fitness of a dead gene is zero, otherwise it is the fraction of of zero
     // trails to all observed trails
     if (!is_alive(gene)) return 0.0f;
-    else return (gene.zero_trails * 1.0f) / (gene.total_trails * 1.0f);
+    else if (use_prob)   return gene.prob;
+    else                 return (gene.zero_trails * 1.0f) / (gene.total_trails * 1.0f);
 }
 
 // Pretty-print a gene
 static inline void print_gene(gene_t gene, char *annotation)
 {
-    log(stdout, "(Fingerprint: 0x%02x%02x%02x%02x%02x%02x%02x%02x, Fitness: %lf)%s", 
+    log(stdout, "(Fingerprint: 0x%02x%02x%02x%02x%02x%02x%02x%02x, Fitness: %.15lf)%s", 
             gene.diff[0], gene.diff[1], gene.diff[2], gene.diff[3],
             gene.diff[4], gene.diff[5], gene.diff[6], gene.diff[7],
             get_fitness(gene), annotation);
@@ -100,11 +103,15 @@ static inline bool is_viable(uint8_t *W, const size_t rounds, const float l2pthr
     if (t >= rounds) return x*ctr >= y*(max(8, rounds) - 8);
     uint8_t w0 = sigma0(W[t-3]),
             w1 = sigma1(W[t-8]);
-    for (uint8_t t1: propagate_add(w0, w1, l2pthresh))
-    for (uint8_t t2: propagate_add(W[t-4], t1, l2pthresh))
+    for (auto pair1 : propagate_add(w0, w1, l2pthresh))
     {
-        W[t] = t2;
-        if (is_viable(W, rounds, l2pthresh, t+1, ctr + !t2)) return true;
+        uint8_t t1 = pair1.first;
+        for (auto pair2 : propagate_add(W[t-4], t1, l2pthresh))
+        {
+            uint8_t t2 = pair2.first;
+            W[t] = t2;
+            if (is_viable(W, rounds, l2pthresh, t+1, ctr + !t2)) return true;
+        }
     }
     return false;
 }
@@ -197,11 +204,12 @@ void *slave_make_trails(void *arg)
         gene_t gene;
         // Build a differential, print it out
         make_input_diff(gen, gene.diff, config.rounds, config.pthresh);
-        std::pair<size_t, size_t> result = propagate(gene.diff, config.rounds, config.pthresh);
-        if (result.first)
+        tuple<size_t, size_t, double> result = propagate(gene.diff, config.rounds, config.pthresh);
+        if (get<0>(result))
         {
-            gene.zero_trails  = result.first;
-            gene.total_trails = result.second;
+            gene.zero_trails  = get<0>(result);
+            gene.total_trails = get<1>(result);
+            gene.prob         = get<2>(result);
             put_next_gene(gene);
        }
     }
@@ -227,7 +235,10 @@ void show_usage()
         "  -s size      Specify the gene pool size.\n"
         "               Defaults to 32.\n"
         "  -m rate      Specify the immigration rate.\n"
-        "               Defaults to 0.05 (5%)");
+        "               Defaults to 0.05 (5%)\n"
+        "  -l file      Reads each line from the file as an input\n"
+        "               difference of the form 0x......\\n, and outputs\n"
+        "               their fitnesses to stdout.");
 }
 
 // Entry point
@@ -250,13 +261,14 @@ int main(int argc, char **argv)
     size_t rounds    = 8;
     size_t pool_size = 32;
     float immigration_rate = 0.05;
+    FILE *file_list  = NULL;
     char key_fname[] = "/Scratch/key-file-*.******.bin",
          add_fname[] = "/Scratch/add-file-*.******.bin",
          maj_fname[] = "/Scratch/maj-file-*.******.bin";
 
     // Read args
     int option = -1;
-    while ((option = getopt(argc, argv, "hidn:p:r:s:m:")) != -1) switch (option)
+    while ((option = getopt(argc, argv, "hidn:p:r:s:m:l:")) != -1) switch (option)
     {
         case 'd':
             dry_run = true;
@@ -296,6 +308,11 @@ int main(int argc, char **argv)
             ASSERT(immigration_rate <= 0.5, log(stdout, "Error: Immigration rate must be <= 0.5"));
             break;
 
+        case 'l':
+            file_list = fopen(optarg, "r");
+            ASSERT(file_list != NULL, log(stdout, "Error: Unable to open file %s", optarg));
+            break;
+
         default:
             ASSERT(0);
     }
@@ -312,8 +329,10 @@ int main(int argc, char **argv)
     log(stdout, "Threshold probability: 2^%f", pthresh);
     log(stdout, "Random only: %s", random_only? "true" : "false");
     log(stdout, "Pool size: %zu", pool_size);
-    log(stdout, "Immigration rate: %f\n", immigration_rate);
-    
+    log(stdout, "Immigration rate: %f", immigration_rate);
+    log(stdout, "Reading log file: %s", file_list? "true" : "false");
+    puts("");
+
     // Load memos
     if (load_key_memo(key_fname)) log(stdout, "Loaded key memos from %s", key_fname);
     else log(stdout, "Failed to load key memos from %s", key_fname);
@@ -323,6 +342,42 @@ int main(int argc, char **argv)
     else log(stdout, "Failed to load maj memos from %s", maj_fname);
     log(stdout, "Done!\n");
     if (dry_run) return 0;
+
+    // We've been given a list to test; no need to set up anything else
+    if (file_list)
+    {
+        size_t len = 256;
+        char *buf = (char *) malloc(len+1);
+        while (getline(&buf, &len, file_list) != -1)
+        {
+            // Mutable reference to buf
+            char *line = &buf[0];
+            char *sent = NULL;
+            if ((sent = strchr(line, '\n')) != NULL) *sent = '\0';
+            gene_t gene;
+            memset(gene.diff, 0, 16);
+            ASSERT(line[0] == '0' && line[1] == 'x', log(stdout, "Error: Malformed line at index 0 \"%s\"", line));          
+            line += 2;
+            for (int idx = 0; idx < 8; idx++)
+            {
+                if      ('0' <= line[2*idx] && line[2*idx] <= '9') { gene.diff[idx] = line[2*idx] - '0'; }
+                else if ('a' <= line[2*idx] && line[2*idx] <= 'f') { gene.diff[idx] = line[2*idx] - 'a'; }
+                else ASSERT(false, log(stdout, "Error: Malformed line at index %d \"%s\"", 2*idx+2, line));
+                gene.diff[idx] <<= 4;
+                if      ('0' <= line[2*idx+1] && line[2*idx+1] <= '9') { gene.diff[idx] |= line[2*idx+1] - '0'; }
+                else if ('a' <= line[2*idx+1] && line[2*idx+1] <= 'f') { gene.diff[idx] |= line[2*idx+1] - 'a'; }
+                else ASSERT(false, log(stdout, "Error: Malformed line at index %d \"%s\"", 2*idx+3, line));
+            }
+            tuple<size_t,size_t,double> result = propagate(gene.diff, rounds, pthresh); 
+            gene.zero_trails  = get<0>(result);
+            gene.total_trails = get<1>(result);
+            gene.prob         = get<2>(result);
+            print_gene(gene, (char *)" - Immigration");
+        }
+        free(buf);
+        fclose(file_list);
+        exit(0);
+    }
 
     // Set up RNGs
     random_device devrand;
@@ -432,11 +487,12 @@ int main(int argc, char **argv)
                 }
                 if (is_zero_diff(pool[idx].diff)) continue;
                 // Try to propagate it
-                std::pair<size_t, size_t> result = propagate(pool[idx].diff, rounds, pthresh);
-                if (result.first)
+                tuple<size_t,size_t,double> result = propagate(pool[idx].diff, rounds, pthresh);
+                if (get<0>(result))
                 {
-                    pool[idx].zero_trails  = result.first;
-                    pool[idx].total_trails = result.second;
+                    pool[idx].zero_trails  = get<0>(result);
+                    pool[idx].total_trails = get<1>(result);
+                    pool[idx].prob         = get<2>(result);
                     print_gene(pool[idx], (char *)" - Generated");
                     break;
                 }

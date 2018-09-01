@@ -10,6 +10,7 @@
 #include <stack>
 #include <vector>
 #include <map>
+#include <utility>
 using namespace std;
 
 // Consts
@@ -46,20 +47,21 @@ static inline uint8_t keymix_diff(const uint8_t x, const uint8_t d_x, const size
     return add(x, K[round]) ^ add(x ^ d_x, K[round]);
 }
 
-// Util
-static inline vector<uint8_t> filter(const map<uint8_t, size_t>& samples, const size_t sample_size, const float l2pthresh)
+// Util; takes a collection of inputs and frequencies, and returns a 
+// collection of inputs and log2 probabilities, all greater than l2pthresh
+static inline vector<pair<uint8_t,int8_t>> filter(const map<uint8_t, size_t>& samples, const size_t sample_size, const float l2pthresh)
 {
-    vector<uint8_t> results;
+    vector<pair<uint8_t,int8_t>> results;
     for (const auto& elem : samples)
     {
         float prob = log2f(elem.second) - log2f(sample_size);
-        if (prob >= l2pthresh) results.push_back(elem.first);
+        if (prob >= l2pthresh) results.push_back(make_pair(elem.first, (uint8_t) floor(prob)));
     }
     return results;
 }
 
 // Nonlinear
-vector<uint8_t> propagate_keymix(const uint8_t d_x, const size_t round, const float l2pthresh)
+vector<pair<uint8_t,int8_t>> propagate_keymix(const uint8_t d_x, const size_t round, const float l2pthresh)
 {
     const size_t sample_size = 256;
     map<uint8_t, size_t> counts;
@@ -70,13 +72,11 @@ vector<uint8_t> propagate_keymix(const uint8_t d_x, const size_t round, const fl
         uint8_t x = n;
         counts[keymix_diff(x, d_x, round)]++;
     }
-    vector<uint8_t> result = filter(counts, sample_size, l2pthresh);
-    return result;
+    return filter(counts, sample_size, l2pthresh);
 }
 
 // Nonlinear
-static map<uint16_t, vector<uint8_t>> add_memo;
-vector<uint8_t> propagate_add(const uint8_t d_x, const uint8_t d_y, const float l2pthresh)
+vector<pair<uint8_t,int8_t>> propagate_add(const uint8_t d_x, const uint8_t d_y, const float l2pthresh)
 {
     const size_t sample_size = 256*256;
     map<uint8_t, size_t> counts;
@@ -88,19 +88,16 @@ vector<uint8_t> propagate_add(const uint8_t d_x, const uint8_t d_y, const float 
                 y = (n >> 0) & 0xff;
         counts[add_diff(x, y, d_x, d_y)]++;
     }
-    vector<uint8_t> result = filter(counts, sample_size, l2pthresh);
-    return result;
+    return filter(counts, sample_size, l2pthresh);
 }
 
 // Nonlinear
-static map<uint32_t, vector<uint8_t>> maj_memo;
-vector<uint8_t> propagate_maj(const uint8_t d_x, const uint8_t d_y, const uint8_t d_z, const float l2pthresh)
+vector<pair<uint8_t,int8_t>> propagate_maj(const uint8_t d_x, const uint8_t d_y, const uint8_t d_z, const float l2pthresh)
 {
     const size_t sample_size = 256*256;
     map<uint8_t, size_t> counts;
 
     // Sample
-    // for (int x = 0; x < 256; x++) for (int y = 0; y < 256; y++) for (int z = 0; z < 256; z++)
     for (int n = 0; n < sample_size; n++)
     {
         uint8_t x = rand() & 0xff,
@@ -108,8 +105,7 @@ vector<uint8_t> propagate_maj(const uint8_t d_x, const uint8_t d_y, const uint8_
                 z = rand() & 0xff;
         counts[maj_diff(x, y, z, d_x, d_y, d_z)]++;
     }
-    vector<uint8_t> result = filter(counts, sample_size, l2pthresh);
-    return result;
+    return filter(counts, sample_size, l2pthresh);
 }
 
 // Entry point
@@ -136,25 +132,38 @@ int main(int argc, char **argv)
          *add_file = fopen(add_fname, "w+"),
          *maj_file = fopen(maj_fname, "w+");
  
+    // NOTE: File format is as follows
+    // [args...],[len], [output_diff],[output_diff_log2prob], ...
+    // where each term is a single uint8_t
+    // For example, for maj_memo, the output may look like:
+    // [x=0],[y=1], [z=2], [len=4], [output=0x0], [prob=-2], [output=0x1], [prob=-2], ...
     puts("Creating keymix memo...");
     for (int round = 0; round < 16; round++) for (int d_x = 0; d_x < 256; d_x++)
     {
-        vector<uint8_t> result = propagate_keymix(d_x, round, pthresh);
+        vector<pair<uint8_t,int8_t>> result = propagate_keymix(d_x, round, pthresh);
         putc(d_x & 0xff, key_file);
         putc(round & 0xff, key_file);
         putc(result.size() & 0xff, key_file);
-        for (uint8_t out : result) putc(out, key_file);
+        for (auto out_pair : result) 
+        {
+            putc(out_pair.first, key_file); 
+            putc(out_pair.second, key_file); 
+        }
     }
     fclose(key_file);
 
     puts("Creating add memo...");
     for (int d_x = 0; d_x < 256; d_x++) for (int d_y = 0; d_y < 256; d_y++)
     {
-        vector<uint8_t> result = propagate_add(d_x, d_y, pthresh);
+        vector<pair<uint8_t,int8_t>> result = propagate_add(d_x, d_y, pthresh);
         putc(d_x & 0xff, add_file);
         putc(d_y & 0xff, add_file);
         putc(result.size() & 0xff, add_file);
-        for (uint8_t out : result) putc(out, add_file);
+        for (auto out_pair : result) 
+        {
+            putc(out_pair.first, add_file); 
+            putc(out_pair.second, add_file); 
+        }
     }
     fclose(add_file);
 
@@ -163,12 +172,16 @@ int main(int argc, char **argv)
     for (int d_y = 0; d_y < 256; d_y++)
     for (int d_z = 0; d_z < 256; d_z++)
     {
-        vector<uint8_t> result = propagate_maj(d_x, d_y, d_z, pthresh);
+        vector<pair<uint8_t,int8_t>> result = propagate_maj(d_x, d_y, d_z, pthresh);
         putc(d_x & 0xff, maj_file);
         putc(d_y & 0xff, maj_file);
         putc(d_z & 0xff, maj_file);
         putc(result.size() & 0xff, maj_file);
-        for (uint8_t out : result) putc(out, maj_file);
+        for (auto out_pair : result) 
+        {
+            putc(out_pair.first, maj_file);
+            putc(out_pair.second, maj_file); 
+        }
     }
     fclose(maj_file);
     puts("Done!");
