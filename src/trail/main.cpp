@@ -50,9 +50,9 @@ static inline void kill_gene(gene_t *gene)
 }
 
 // Determine how fit a gene is; this value is strictly in [0,1]
+bool use_prob = true;
 static inline double get_fitness(gene_t gene)
 {
-    bool use_prob = true;
     // Fitness of a dead gene is zero, otherwise it is the fraction of of zero
     // trails to all observed trails
     if (!is_alive(gene)) return 0.0f;
@@ -225,7 +225,8 @@ void show_usage()
         "  -d           Dry run. Runs all setup but does not\n"
         "               generate any trails.\n"
         "  -i           Random only. Does not apply the\n"
-        "               genetic algorithm to generate results."
+        "               genetic algorithm to generate results.\n"
+        "  -f           Opts in to using the naive fitness function.\n"
         "  -n count     Specify the number of threads to use.\n"
         "               Defaults to half of the threads on the CPU.\n"
         "  -p prob      Specify the threshhold probability as a\n"
@@ -268,7 +269,7 @@ int main(int argc, char **argv)
 
     // Read args
     int option = -1;
-    while ((option = getopt(argc, argv, "hidn:p:r:s:m:l:")) != -1) switch (option)
+    while ((option = getopt(argc, argv, "hidfn:p:r:s:m:l:")) != -1) switch (option)
     {
         case 'd':
             dry_run = true;
@@ -276,6 +277,10 @@ int main(int argc, char **argv)
 
         case 'i':
             random_only = true;;
+            break;
+
+        case 'f':
+            use_prob = false;
             break;
 
         case 'n':
@@ -328,6 +333,7 @@ int main(int argc, char **argv)
     log(stdout, "Rounds: %zu/16", rounds);
     log(stdout, "Threshold probability: 2^%f", pthresh);
     log(stdout, "Random only: %s", random_only? "true" : "false");
+    log(stdout, "Naive heuristic: %s", use_prob? "false" : "true");
     log(stdout, "Pool size: %zu", pool_size);
     log(stdout, "Immigration rate: %f", immigration_rate);
     log(stdout, "Reading log file: %s", file_list? "true" : "false");
